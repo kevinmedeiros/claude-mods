@@ -49,6 +49,8 @@ export type Advice = {
   pick?: ScenarioId
   /** true quando nada precisa mudar. */
   isFine: boolean
+  /** O gasto por modelo das últimas horas (`recent`) ou da janela toda. */
+  mixBasis: 'recent' | 'window'
   headline: string
   tip?: string
 }
@@ -75,7 +77,18 @@ export type WindowView = {
   msToReset?: number
   /** % por hora usado na projeção. */
   ratePerHour?: number
-  rateSource: 'recent' | 'window' | 'none'
+  /**
+   * De onde vem o ritmo: últimas horas (`recent`), média da janela (`window`)
+   * ou, no semanal, o ritmo de trabalho medido pelo limite de 5h (`work`).
+   */
+  rateSource: 'recent' | 'window' | 'work' | 'none'
+  /**
+   * Horas de consumo até o reset no ritmo de `ratePerHour`: no 5h, o relógio;
+   * no semanal por trabalho, as horas de trabalho que cabem até o reset.
+   */
+  hoursAhead?: number
+  /** Horas de trabalho por dia usadas na projeção do semanal. */
+  activeHoursPerDay?: number
   /** Média de %/h desde o início da janela. */
   windowRatePerHour?: number
   /** %/h na última hora (5h) ou nas últimas 24h (semanal). */
@@ -101,6 +114,10 @@ export type Snapshot = {
   costUsd?: number
   contextPercent?: number
   advice?: Advice
+  /** Quando os percentuais foram lidos de uma resposta da API. */
+  readAt?: number
+  /** A leitura veio de outra sessão desta máquina, mais recente que a desta. */
+  isSharedReading?: boolean
 }
 
 declare module 'claude-code' {

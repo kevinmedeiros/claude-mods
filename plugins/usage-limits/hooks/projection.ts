@@ -89,11 +89,23 @@ export const recentRate = (
   return Math.max(0, ((pctNow - start.pct) / Math.max(span, floor)) * HOUR)
 }
 
+/** O que a projeção do semanal precisa para medir o ritmo em horas de trabalho. */
+export type WorkPace = {
+  /** %/h do limite de 5h agora (o mais responsivo que temos). */
+  fiveRate?: number
+  /** Pontos do semanal por ponto do 5h. */
+  weekPerFive?: number
+  /** O último ritmo de trabalho medido, para quando o 5h está parado. */
+  lastWorkRate?: number
+  activeHoursPerDay: number
+}
+
 export const project = (
   raw: RawWindow,
   now: number,
   log?: SampleLog,
   bucket?: TokenBucket,
+  work?: WorkPace,
 ): WindowView => {
   const pct = raw.percentUsed
   const resetsAt = raw.resetsAt ? Date.parse(raw.resetsAt) : undefined
@@ -128,10 +140,32 @@ export const project = (
   const points = log && sameWindow(log.resetsAt, resetsAt) ? log.points : []
   view.recentRatePerHour = recentRate(points, pct, now, recentLookback(length), minPeriod(length))
 
+  const workRate =
+    raw.kind === 'seven_day' && work
+      ? work.weekPerFive !== undefined && work.fiveRate !== undefined && work.fiveRate > 0
+        ? work.weekPerFive * work.fiveRate
+        : work.lastWorkRate
+      : undefined
+
+  if (workRate !== undefined && work && workRate > 0) {
+    // Semanal por horas de trabalho: o ritmo da última hora, nas horas por dia em que você trabalha.
+    view.rateSource = 'work'
+    view.ratePerHour = workRate
+    view.activeHoursPerDay = work.activeHoursPerDay
+    view.hoursAhead = (work.activeHoursPerDay * view.msToReset) / DAY
+    view.hoursLeft = (100 - pct) / workRate
+    view.pctAtReset = pct + workRate * view.hoursAhead
+    view.verdict = verdictOf(view.pctAtReset)
+    if (view.pctAtReset >= 100) view.exhaustAt = now + (view.hoursLeft / work.activeHoursPerDay) * DAY
+
+    return view
+  }
+
   const rate = view.recentRatePerHour ?? view.windowRatePerHour
   view.rateSource = view.recentRatePerHour !== undefined ? 'recent' : 'window'
   view.ratePerHour = rate
-  view.pctAtReset = pct + (rate * view.msToReset) / HOUR
+  view.hoursAhead = view.msToReset / HOUR
+  view.pctAtReset = pct + rate * view.hoursAhead
 
   view.verdict = verdictOf(view.pctAtReset)
   if (rate > 0) view.hoursLeft = (100 - pct) / rate
@@ -216,6 +250,18 @@ export const bar = (pct: number, width: number): string => {
   return '█'.repeat(full) + '░'.repeat(width - full)
 }
 
+/** "~38h de uso" no semanal medido por trabalho, "~2,3h" no resto. */
+export const durationLabel = (w: WindowView) =>
+  w.hoursLeft === undefined ? '' : `~${hours(w.hoursLeft)}${w.rateSource === 'work' ? ' de uso' : ''}`
+
+/** Há quanto tempo foi a leitura, quando passa de 10 min. */
+export const readingAge = (readAt: number | undefined, now: number) => {
+  if (readAt === undefined || now - readAt < 10 * MINUTE) return undefined
+  const minutes = Math.round((now - readAt) / MINUTE)
+
+  return minutes < 60 ? `há ${minutes}min` : `há ${hours(minutes / 60)}`
+}
+
 /**
  * O trecho de uma janela na linha de status: curto, porque o terminal corta a
  * linha; o reset e os detalhes ficam na faixa e no painel.
@@ -229,11 +275,17 @@ export const statusPart = (w: WindowView): string => {
   if (w.hoursLeft === undefined) return `${head} parado ✓`
   const mark = w.verdict === 'exhausts' ? '⚠' : w.verdict === 'tight' ? '△' : '✓'
 
-  return `${head} dura ~${hours(w.hoursLeft)} ${mark}`
+  return `${head} dura ${durationLabel(w)} ${mark}`
 }
 
-export const statusLine = (windows: WindowView[], session: Totals, costUsd: number | undefined) => {
+export const statusLine = (
+  windows: WindowView[],
+  session: Totals,
+  costUsd: number | undefined,
+  age?: string,
+) => {
   const parts = windows.map(statusPart)
+  if (age) parts.push(`leitura ${age}`)
   const usage = [`${compact(totalTokens(session))} tok`]
   if (costUsd !== undefined) usage.push(usd(costUsd))
   parts.push(usage.join(' · '))

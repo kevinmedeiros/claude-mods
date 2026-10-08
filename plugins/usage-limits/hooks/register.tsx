@@ -3,6 +3,8 @@ import type { EngineInterface, Register, SessionRateLimit, SessionUsage, TurnUsa
 
 import type { Advice, Mix, ProjectBucket, Snapshot, Totals, WindowView } from '../types'
 import { addToMix, advise, emptyMix } from './advisor'
+import { activeHoursPerDay, addActivity, addHourly, recentMix, updateCalibration, weekPerFive } from './pace'
+import type { Calibration, HourlyMix } from './pace'
 import { HAIKU_ID, costOf, family, modelKey } from './pricing'
 import {
   addSample,
@@ -13,6 +15,7 @@ import {
   project,
   projectName,
   projectShares,
+  readingAge,
   sameWindow,
   statusLine,
   totalTokens,
@@ -39,6 +42,35 @@ const alertsKey = (kind: string) => `alerts:${kind}`
 const mixKey = (kind: string) => `mix:${kind}`
 const projectsKey = (kind: string) => `projects:${kind}`
 const ECONOMY_KEY = 'economy'
+const CALIBRATION_KEY = 'calibration'
+const ACTIVITY_KEY = 'activity'
+const HOURLY_KEY = 'hourly'
+const WORK_RATE_KEY = 'lastWorkRate'
+
+/** A leitura desta sessão e o arquivo que as sessões da máquina compartilham. */
+const reading = { ownAt: 0, own: [] as SessionRateLimit[], sharedFile: '' }
+
+type SharedReading = { at: number; rateLimits: SessionRateLimit[] }
+
+const readShared = async ($: EngineInterface): Promise<SharedReading | undefined> => {
+  if (!reading.sharedFile) return undefined
+  try {
+    if (!(await $.fs.exists(reading.sharedFile))) return undefined
+    const data = JSON.parse(await $.fs.read(reading.sharedFile)) as Partial<SharedReading>
+    return typeof data.at === 'number' && Array.isArray(data.rateLimits) ? (data as SharedReading) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const writeShared = async ($: EngineInterface, value: SharedReading) => {
+  if (!reading.sharedFile) return
+  try {
+    await $.fs.write(reading.sharedFile, JSON.stringify(value))
+  } catch {
+    // Sem arquivo compartilhado, cada sessão segue com a própria leitura.
+  }
+}
 
 const resetOf = (w: SessionRateLimit) => (w.resetsAt ? Date.parse(w.resetsAt) : NaN)
 
@@ -48,21 +80,61 @@ const loadMix = async ($: EngineInterface, w: WindowView): Promise<Mix | undefin
   return held && w.resetsAt !== undefined && sameWindow(held.resetsAt, w.resetsAt) ? held : undefined
 }
 
-/** Grava uma leitura de cada janela e recalcula tudo, a recomendação inclusive. */
+/**
+ * Recalcula tudo a partir da leitura mais nova da máquina: a desta sessão ou a
+ * que outra sessão gravou no arquivo compartilhado. `record` diz que a leitura
+ * desta sessão acabou de mudar.
+ */
 const refresh = async ($: EngineInterface, usage: SessionUsage, record: boolean) => {
   const now = await $.clock.now()
+  if (record && usage.rateLimits.length > 0) {
+    reading.ownAt = now
+    reading.own = usage.rateLimits
+    await writeShared($, { at: now, rateLimits: usage.rateLimits })
+    const five = usage.rateLimits.find(w => w.kind === 'five_hour')
+    const week = usage.rateLimits.find(w => w.kind === 'seven_day')
+    if (five && week) {
+      const held = (await $.store.get(CALIBRATION_KEY)) as Calibration | undefined
+      const next = updateCalibration(held, five, week)
+      if (next) await $.store.set(CALIBRATION_KEY, next)
+    }
+  }
+
+  let limits = reading.own.length > 0 ? reading.own : usage.rateLimits
+  let readAt: number | undefined = reading.ownAt || undefined
+  let isShared = false
+  const shared = await readShared($)
+  if (shared && shared.rateLimits.length > 0 && shared.at > (reading.ownAt || 0) + 30_000) {
+    limits = shared.rateLimits
+    readAt = shared.at
+    isShared = true
+  }
+  // O 5h primeiro: o ritmo dele alimenta o do semanal.
+  const ordered = [...limits].sort((a, b) => (a.kind === 'five_hour' ? -1 : b.kind === 'five_hour' ? 1 : 0))
+
+  const perDay = activeHoursPerDay((await $.store.get(ACTIVITY_KEY)) as number[] | undefined, now)
+  const ratio = weekPerFive((await $.store.get(CALIBRATION_KEY)) as Calibration | undefined)
+  const lastWorkRate = (await $.store.get(WORK_RATE_KEY)) as number | undefined
+  let fiveRate: number | undefined
   const windows: WindowView[] = []
   const mixes: Record<string, Mix | undefined> = {}
 
-  for (const raw of usage.rateLimits) {
+  for (const raw of ordered) {
     const resetsAt = resetOf(raw)
     let log = (await $.store.get(samplesKey(raw.kind))) as SampleLog | undefined
-    if (record && !Number.isNaN(resetsAt)) {
-      log = addSample(log, resetsAt, { t: now, pct: raw.percentUsed })
+    if ((record || isShared) && !Number.isNaN(resetsAt)) {
+      log = addSample(log, resetsAt, { t: readAt ?? now, pct: raw.percentUsed })
       await $.store.set(samplesKey(raw.kind), log)
     }
     const bucket = (await $.store.get(bucketKey(raw.kind))) as TokenBucket | undefined
-    const view = project(raw, now, log, bucket)
+    const view = project(raw, now, log, bucket, { fiveRate, weekPerFive: ratio, lastWorkRate, activeHoursPerDay: perDay })
+    if (raw.kind === 'five_hour') {
+      const recent = view.recentRatePerHour ?? 0
+      fiveRate = recent > 0 ? recent : (view.windowRatePerHour ?? 0) > 0 ? view.windowRatePerHour : undefined
+    }
+    if (view.rateSource === 'work' && ratio !== undefined && fiveRate !== undefined && view.ratePerHour !== undefined) {
+      await $.store.set(WORK_RATE_KEY, view.ratePerHour)
+    }
     windows.push(view)
     mixes[raw.kind] = await loadMix($, view)
     const projects = (await $.store.get(projectsKey(raw.kind))) as ProjectBucket | undefined
@@ -71,15 +143,18 @@ const refresh = async ($: EngineInterface, usage: SessionUsage, record: boolean)
     }
   }
 
+  const recent = recentMix((await $.store.get(HOURLY_KEY)) as HourlyMix | undefined, now, 0)
   const next: Snapshot = {
     updatedAt: now,
     windows,
     costUsd: usage.cost?.usd,
     contextPercent: usage.context.percent,
-    advice: advise(windows, mixes, await read($, setup)),
+    advice: advise(windows, mixes, await read($, setup), recent),
+    readAt,
+    isSharedReading: isShared,
   }
   await update($, snapshot, () => next)
-  $.ui.status(statusLine(windows, await read($, session), next.costUsd))
+  $.ui.status(statusLine(windows, await read($, session), next.costUsd, readingAge(readAt, now)))
   await alert($, windows, now, next.advice)
 }
 
@@ -150,6 +225,20 @@ const countMix = async ($: EngineInterface, role: 'main' | 'sub', usage: TurnUsa
   }
 }
 
+/** Anota a hora de trabalho e soma a resposta ao gasto por hora (para a recomendação). */
+const countRecent = async ($: EngineInterface, role: 'main' | 'sub', usage: TurnUsage) => {
+  const now = await $.clock.now()
+  await $.store.set(ACTIVITY_KEY, addActivity((await $.store.get(ACTIVITY_KEY)) as number[] | undefined, now))
+  const tokens = {
+    input: usage.input_tokens,
+    output: usage.output_tokens,
+    cacheRead: usage.cache_read_input_tokens,
+    cacheWrite: usage.cache_creation_input_tokens,
+  }
+  const held = (await $.store.get(HOURLY_KEY)) as HourlyMix | undefined
+  await $.store.set(HOURLY_KEY, addHourly(held, now, role, modelKey(usage.model), tokens))
+}
+
 /** Soma o custo de uma resposta ao projeto da sessão em cada janela aberta. */
 const countProject = async ($: EngineInterface, usage: TurnUsage) => {
   const name = await read($, currentProject)
@@ -213,6 +302,8 @@ export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
+    const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
+    reading.sharedFile = home ? `${home.replaceAll('\\', '/')}/.claude/usage-limits/latest.json` : ''
     const name = await findProject($, started.cwd)
     await update($, currentProject, () => name)
     await $.command.register({
@@ -270,6 +361,7 @@ export const register: Register = on => {
     if (result.usage) {
       await countMix($, e.agentId ? 'sub' : 'main', result.usage)
       await countProject($, result.usage)
+      await countRecent($, e.agentId ? 'sub' : 'main', result.usage)
     }
 
     return result
@@ -295,7 +387,7 @@ export const register: Register = on => {
       }))
       await countTokens($, totalTokens(add))
       const last = await read($, snapshot)
-      $.ui.status(statusLine(last?.windows ?? [], totals, last?.costUsd))
+      $.ui.status(statusLine(last?.windows ?? [], totals, last?.costUsd, readingAge(last?.readAt, await $.clock.now())))
     }
 
     return result

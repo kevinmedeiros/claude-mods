@@ -8,6 +8,8 @@ import {
   bar,
   clockTime,
   compact,
+  durationLabel,
+  readingAge,
   duration,
   hours,
   percent,
@@ -72,7 +74,21 @@ const durationText = (w: WindowView) =>
       ? '—'
       : w.hoursLeft === undefined
         ? 'sem consumo'
-        : `~${hours(w.hoursLeft)}`
+        : durationLabel(w)
+
+/** No semanal medido por trabalho: quantos dias isso dá no seu ritmo de horas por dia. */
+const workDaysText = (w: WindowView) =>
+  w.rateSource === 'work' && w.hoursLeft !== undefined && w.activeHoursPerDay
+    ? `≈ ${(w.hoursLeft / w.activeHoursPerDay).toFixed(1).replace('.', ',')} dias trabalhando ~${Math.round(w.activeHoursPerDay)}h/dia`
+    : undefined
+
+/** "atualizado 09:12" e, se a leitura for velha, de quando ela é e de onde veio. */
+const freshness = (snap: Snapshot) => {
+  const age = readingAge(snap.readAt, snap.updatedAt)
+  const base = `atualizado ${clockTime(snap.updatedAt, snap.updatedAt)}`
+  if (age) return `${base} · leitura ${age}${snap.isSharedReading ? ' (outra sessão)' : ''}: atualiza na próxima resposta`
+  return snap.isSharedReading ? `${base} · leitura de outra sessão` : base
+}
 
 const resetText = (w: WindowView, now: number) =>
   w.resetsAt === undefined
@@ -177,7 +193,10 @@ const AdviceCard = (ui: BasicUi, a: Advice | undefined, economy: boolean, action
           <Text dimColor>{setupText(a, economy)}</Text>
           {a.scenarios.length > 0 && (
             <Box flexDirection="column" marginTop={1}>
-              <Text dimColor>Se o resto da janela {a.windowLabel.toLowerCase()} seguir assim:</Text>
+              <Text dimColor>
+                Se o resto da janela {a.windowLabel.toLowerCase()} seguir assim (pelo gasto{' '}
+                {a.mixBasis === 'recent' ? 'das últimas 3 horas com uso' : 'da janela toda'}):
+              </Text>
               {a.scenarios.map(s => (
                 <Text key={s.id} bold={s.id === a.pick} color={s.lasts ? 'success' : 'error'}>
                   {s.id === a.pick ? '› ' : '  '}
@@ -249,9 +268,12 @@ const WindowCard = (ui: RichUi, w: WindowView, now: number, px: number) => {
       <Box flexDirection="row" columnGap={3} flexWrap="wrap">
         {Stat(ui, 'dur', 'Duração estimada', durationText(w), colorOf(w))}
         {Stat(ui, 'reset', 'Reset em', resetText(w, now))}
-        {Stat(ui, 'rate', 'Ritmo recente', rateText(w.recentRatePerHour))}
+        {w.rateSource === 'work'
+          ? Stat(ui, 'rate', 'Ritmo de trabalho', `${rateText(w.ratePerHour)} de uso`)
+          : Stat(ui, 'rate', 'Ritmo recente', rateText(w.recentRatePerHour))}
         {Stat(ui, 'avg', 'Média da janela', rateText(w.windowRatePerHour))}
       </Box>
+      {workDaysText(w) !== undefined && <Text dimColor>{workDaysText(w)}</Text>}
       <Text color={colorOf(w)}>{verdictText(w, now)}</Text>
       {tokens !== undefined && <Text dimColor>{tokens}</Text>}
       {ProjectList(ui, w, '')}
@@ -305,7 +327,7 @@ export const RichPane = (ui: RichUi, data: ViewData, columns: number, actions: A
     <Box flexDirection="column" rowGap={1}>
       <Box flexDirection="row" justifyContent="space-between">
         <Text bold>Limites de uso</Text>
-        <Text dimColor>atualizado {clockTime(now, now)}</Text>
+        <Text dimColor>{freshness(snap)}</Text>
       </Box>
       {snap.windows.length === 0 && <Text dimColor>{EMPTY}</Text>}
       {snap.windows.map(w => WindowCard(ui, w, now, px))}
@@ -347,6 +369,7 @@ export const RichBand = (ui: RichUi, data: ViewData, actions: Actions) => {
       <Text dimColor>
         {compact(totalTokens(totals))} tokens
         {snap.costUsd !== undefined && ` · ${usd(snap.costUsd)}`}
+        {readingAge(snap.readAt, now) !== undefined && ` · leitura ${readingAge(snap.readAt, now)}`}
       </Text>
     </Box>
     {AdviceLine(ui, snap.advice, data.economy, actions)}
@@ -376,7 +399,8 @@ export const TerminalBand = (ui: TerminalUi, { snap, totals, economy }: ViewData
       ))}
       <Text key="session" dimColor>
         {compact(totalTokens(totals))} tokens
-        {snap.costUsd !== undefined && ` · ${usd(snap.costUsd)}`} · /limites
+        {snap.costUsd !== undefined && ` · ${usd(snap.costUsd)}`}
+        {readingAge(snap.readAt, snap.updatedAt) !== undefined && ` · leitura ${readingAge(snap.readAt, snap.updatedAt)}`} · /limites
       </Text>
     </Box>
     {AdviceLine(ui, snap.advice, economy, { ...actions, details: undefined })}
@@ -392,7 +416,7 @@ export const TerminalPane = (ui: TerminalUi, { snap, totals, economy }: ViewData
 
   return (
     <Box flexDirection="column">
-      <Text dimColor>atualizado {clockTime(now, now)}</Text>
+      <Text dimColor>{freshness(snap)}</Text>
       {snap.windows.length === 0 && <Text dimColor>{EMPTY}</Text>}
       {snap.windows.map(w => {
         const tokens = tokensLine(w)
@@ -407,7 +431,10 @@ export const TerminalPane = (ui: TerminalUi, { snap, totals, economy }: ViewData
               {'  '}duração estimada {durationText(w)} · reset em {resetText(w, now)}
             </Text>
             <Text dimColor>
-              {'  '}ritmo {rateText(w.recentRatePerHour)} recente · {rateText(w.windowRatePerHour)} média da janela
+              {'  '}
+              {w.rateSource === 'work'
+                ? `ritmo de trabalho ${rateText(w.ratePerHour)} por hora de uso · ${workDaysText(w) ?? ''}`
+                : `ritmo ${rateText(w.recentRatePerHour)} recente · ${rateText(w.windowRatePerHour)} média da janela`}
             </Text>
             <Text color={colorOf(w)}>
               {'  '}

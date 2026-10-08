@@ -43,6 +43,7 @@ export const advise = (
   windows: WindowView[],
   mixes: Record<string, Mix | undefined>,
   setup: Setup,
+  recent?: Mix,
 ): Advice | undefined => {
   const open = windows.filter(
     w => w.ratePerHour !== undefined && w.msToReset !== undefined && w.verdict !== 'exhausted',
@@ -56,7 +57,8 @@ export const advise = (
   const mainKey = setup.mainModel ? modelKey(setup.mainModel) : undefined
   const mainName = mainKey ? modelLabel(mainKey) : 'o modelo atual'
   const name = windowName(binding.kind)
-  const mix = mixes[binding.kind]
+  // O gasto das últimas horas mostra o que você está usando agora; a janela toda só na falta dele.
+  const mix = recent ?? mixes[binding.kind]
   const mainCost = mix ? costAt(mix.main) : 0
   const subCost = mix ? costAt(mix.sub) : 0
   const total = mainCost + subCost
@@ -70,6 +72,7 @@ export const advise = (
     subModels,
     scenarios: [],
     isFine: binding.verdict === 'ok',
+    mixBasis: recent ? 'recent' : 'window',
     headline: '',
   }
   if (setup.mainEffort === 'xhigh' || setup.mainEffort === 'max') {
@@ -95,7 +98,7 @@ export const advise = (
       const seen = advice.scenarios.some(s => Math.abs(s.factor - factor) < 0.02)
       if (factor > 0.97 || seen) continue
       const scenarioRate = rate * factor
-      const pctAtReset = binding.pct + (scenarioRate * (binding.msToReset ?? 0)) / HOUR
+      const pctAtReset = binding.pct + scenarioRate * (binding.hoursAhead ?? (binding.msToReset ?? 0) / HOUR)
       advice.scenarios.push({
         id,
         label: labels[id],
@@ -106,6 +109,8 @@ export const advise = (
       })
     }
   }
+
+  const unit = binding.rateSource === 'work' ? ' de uso' : ''
 
   if (advice.isFine) {
     advice.headline =
@@ -134,7 +139,7 @@ export const advise = (
         ? `⚠ No ritmo atual o limite ${name} acaba antes do reset. Use ${mainName} só para orquestrar e ` +
           'deixe a execução para subagentes em Haiku.'
         : `⚠ ${current}. Nem com ${best.label} o limite ${name} chega ao reset; ` +
-          `assim ele dura ~${hours(best.hoursLeft ?? 0)} em vez de ~${hours(binding.hoursLeft ?? 0)}.`
+          `assim ele dura ~${hours(best.hoursLeft ?? 0)}${unit} em vez de ~${hours(binding.hoursLeft ?? 0)}${unit}.`
 
     return advice
   }
@@ -148,7 +153,7 @@ export const advise = (
   }
   advice.headline =
     `💡 ${current}. Para não ficar sem uso, ${action[pick.id]}: ` +
-    `o limite ${name} passa a durar ~${hours(pick.hoursLeft ?? 0)} e seu plano dura até o reset ` +
+    `o limite ${name} passa a durar ~${hours(pick.hoursLeft ?? 0)}${unit} e seu plano dura até o reset ` +
     `(~${percent(pick.pctAtReset)} no fim).`
 
   return advice

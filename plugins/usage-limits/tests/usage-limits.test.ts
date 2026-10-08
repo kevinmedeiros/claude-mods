@@ -2,7 +2,9 @@ import type { On, RenderElement } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { addToMix, advise, emptyMix } from '../hooks/advisor'
-import { HOUR, MINUTE, addSample, emptyTotals, project, projectName, projectShares, statusLine } from '../hooks/projection'
+import { activeHoursPerDay, addActivity, addHourly, recentMix, updateCalibration, weekPerFive } from '../hooks/pace'
+import type { Calibration } from '../hooks/pace'
+import { HOUR, MINUTE, addSample, emptyTotals, project, projectName, projectShares, statusLine, statusPart } from '../hooks/projection'
 
 const NOW = Date.parse('2026-10-08T12:00:00Z')
 const iso = (t: number) => new Date(t).toISOString()
@@ -274,4 +276,108 @@ test('semanal recém-começado: o ritmo é por dia, não pelas primeiras horas',
   expect(w.verdict).toBe('ok')
   const fiveHour = project({ kind: 'five_hour', percentUsed: 26, resetsAt: iso(NOW + 1.6 * HOUR) }, NOW)
   expect(Math.round(fiveHour.hoursLeft ?? 0)).toBe(10)
+})
+
+const reading = (p5: number, pWeek: number) => ({
+  five: { kind: 'five_hour', percentUsed: p5, resetsAt: iso(NOW + 1.6 * HOUR) },
+  week: { kind: 'seven_day', percentUsed: pWeek, resetsAt: iso(NOW + 163 * HOUR) },
+})
+
+test('calibração com as leituras reais da manhã: 1 ponto semanal a cada 4 do 5h', () => {
+  let c: Calibration | undefined
+  for (const [p5, pw] of [[19, 5], [22, 6], [25, 7], [27, 7]] as const) {
+    const r = reading(p5, pw)
+    c = updateCalibration(c, r.five, r.week)
+  }
+  expect(c?.sum5).toBe(8)
+  expect(c?.sumWeek).toBe(2)
+  expect(weekPerFive(c)).toBe(0.25)
+  // Uma janela de 5h nova começa do zero: 27% → 3% conta como +3, não como -24.
+  const next = updateCalibration(c, { kind: 'five_hour', percentUsed: 3, resetsAt: iso(NOW + 6 * HOUR) }, reading(0, 8).week)
+  expect(next?.sum5).toBe(11)
+  expect(next?.sumWeek).toBe(3)
+})
+
+test('semanal em horas de trabalho reage na hora à troca de Opus para Haiku', () => {
+  const week = { kind: 'seven_day', percentUsed: 7, resetsAt: iso(NOW + 163 * HOUR) }
+  // Opus executando: o 5h anda 8%/h → semanal 2%/h de trabalho.
+  const opus = project(week, NOW, undefined, undefined, { fiveRate: 8, weekPerFive: 0.25, activeHoursPerDay: 8 })
+  expect(opus.rateSource).toBe('work')
+  expect(Math.round(opus.hoursLeft ?? 0)).toBe(47)
+  expect(opus.verdict).toBe('exhausts')
+  expect(statusPart(opus)).toBe('Sem 7% dura ~47h de uso ⚠')
+  // Haiku executando: o 5h passa a 1,5%/h → semanal folgado.
+  const haiku = project(week, NOW, undefined, undefined, { fiveRate: 1.5, weekPerFive: 0.25, activeHoursPerDay: 8 })
+  expect(Math.round(haiku.hoursLeft ?? 0)).toBe(248)
+  expect(haiku.verdict).toBe('ok')
+  expect(Math.round(haiku.pctAtReset ?? 0)).toBe(27)
+  // 5h parado: usa o último ritmo de trabalho medido, não "infinito".
+  const idle = project(week, NOW, undefined, undefined, { fiveRate: undefined, weekPerFive: 0.25, lastWorkRate: 0.375, activeHoursPerDay: 8 })
+  expect(Math.round(idle.hoursLeft ?? 0)).toBe(248)
+  // Sem calibração ainda: volta para o ritmo por dia.
+  const plain = project(week, NOW, undefined, undefined, { fiveRate: 8, activeHoursPerDay: 8 })
+  expect(plain.rateSource).toBe('window')
+})
+
+test('horas de trabalho por dia', () => {
+  const h = (hoursAgo: number) => NOW - hoursAgo * HOUR
+  let list: number[] | undefined
+  for (const ago of [5, 4, 3, 1]) list = addActivity(list, h(ago))
+  expect(activeHoursPerDay(list, NOW)).toBe(8)
+  // Três dias, 6 horas por dia.
+  let days: number[] | undefined
+  for (const d of [0, 1, 2]) for (const k of [0, 1, 2, 3, 4, 5]) days = addActivity(days, NOW - d * 24 * HOUR - k * HOUR)
+  expect(activeHoursPerDay(days, NOW)).toBe(6)
+})
+
+test('recomendação usa o gasto das últimas horas: depois da troca para Haiku não pede Haiku de novo', () => {
+  const t = tok(500_000, 200_000, 4_000_000)
+  let hourly = addHourly(undefined, NOW - 6 * HOUR, 'sub', 'opus-5-5', t)
+  hourly = addHourly(hourly, NOW - 6 * HOUR, 'main', 'opus-5-5', tok(50_000, 20_000, 400_000))
+  for (const ago of [2, 1, 0]) {
+    hourly = addHourly(hourly, NOW - ago * HOUR, 'main', 'opus-5-5', tok(50_000, 20_000, 400_000))
+    hourly = addHourly(hourly, NOW - ago * HOUR, 'sub', 'haiku-5-5', t)
+  }
+  const recent = recentMix(hourly, NOW, 0)
+  expect(Object.keys(recent?.sub ?? {})).toEqual(['haiku-5-5'])
+
+  const week = project({ kind: 'seven_day', percentUsed: 60, resetsAt: iso(NOW + 4 * 24 * HOUR) }, NOW)
+  let windowMix = addToMix(emptyMix(NOW + 4 * 24 * HOUR), 'sub', 'claude-opus-5-5', t)
+  windowMix = addToMix(windowMix, 'main', 'claude-opus-5-5', tok(50_000, 20_000, 400_000))
+  const before = advise([week], { seven_day: windowMix }, { mainModel: 'claude-opus-5-5' })
+  const after = advise([week], { seven_day: windowMix }, { mainModel: 'claude-opus-5-5' }, recent)
+  expect(before?.pick).toBe('sub-haiku')
+  expect(after?.mixBasis).toBe('recent')
+  expect(after?.subModels).toEqual(['haiku-5-5'])
+  expect(after?.pick).not.toBe('sub-haiku')
+})
+
+test('sessão parada usa a leitura mais nova que outra sessão gravou e mostra a idade', async ($, on) => {
+  engine(on)
+  const statuses: (string | undefined)[] = []
+  on('ui.status', ($, e) => (statuses.push(e.text), { value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('env.get', () => ({ value: '/Users/k' }))
+  on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
+  on('command.register', ($, e) => ({ value: { command: e.name } }))
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  const shared = {
+    at: NOW - 20 * MINUTE,
+    rateLimits: [
+      { kind: 'five_hour', percentUsed: 40, resetsAt: iso(NOW + 3 * HOUR) },
+      { kind: 'seven_day', percentUsed: 12, resetsAt: iso(NOW + 5 * 24 * HOUR) },
+    ],
+  }
+  on('fs.exists', ($, e) => ({ value: e.path === '/Users/k/.claude/usage-limits/latest.json' }))
+  on('fs.read', () => ({ value: JSON.stringify(shared) }))
+  on('session.usage', () => ({
+    value: {
+      startedAt: 0,
+      context: { window: 200_000 },
+      rateLimits: [{ kind: 'five_hour', percentUsed: 10, resetsAt: iso(NOW + 3 * HOUR) }],
+    },
+  }))
+
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  expect(statuses.at(-1)).toMatch(/^5h 40% .* │ Sem 12% .* │ leitura há 20min │ 0 tok$/)
 })

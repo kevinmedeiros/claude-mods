@@ -1,6 +1,6 @@
 {
   "name": "usage-limits",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Consumo de tokens, custo, previsão dos limites de 5h e semanal e recomendação de modelo",
   "types": "./types/index.d.ts",
   "author": {
