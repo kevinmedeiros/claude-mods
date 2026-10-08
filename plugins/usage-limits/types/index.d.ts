@@ -67,6 +67,43 @@ export type ProjectShare = {
 /** Gasto em US$ (preço de API) por projeto numa janela. */
 export type ProjectBucket = { resetsAt: number; firstPct: number; byProject: Record<string, number> }
 
+/** Uma sessão do Claude Code desta máquina, como ela mesma se registra. */
+export type SessionRecord = {
+  id: string
+  project: string
+  model?: string
+  startedAt: number
+  /** O último sinal da sessão (a cada minuto enquanto aberta). */
+  updatedAt: number
+  tokens: Totals
+  /** Custo equivalente em preço de API, como o /cost soma. */
+  costUsd: number
+  ended?: boolean
+}
+
+export type SessionsView = {
+  /** As abertas agora, esta primeiro. */
+  running: SessionRecord[]
+  total: { tokens: Totals; costUsd: number; count: number }
+  /** Todas as de hoje, fechadas inclusive. */
+  today: { tokens: Totals; costUsd: number; count: number }
+}
+
+/** O gasto dos créditos de API no ciclo, lido do relatório de custo do Console. */
+export type ApiSpend = {
+  cycleStart: number
+  cycleEnd: number
+  spentUsd: number
+  creditUsd: number
+  byModel: { model: string; usd: number }[]
+  dailyUsd: number
+  projectedUsd: number
+  /** Quando o crédito acaba no ritmo atual, se for antes do fim do ciclo. */
+  runsOutAt?: number
+  fetchedAt: number
+  problem?: string
+}
+
 export type Verdict = 'ok' | 'tight' | 'exhausts' | 'exhausted' | 'unknown'
 
 export type WindowView = {
@@ -118,10 +155,21 @@ export type Snapshot = {
   readAt?: number
   /** A leitura veio de outra sessão desta máquina, mais recente que a desta. */
   isSharedReading?: boolean
+  /** As sessões abertas nesta máquina e o total. */
+  sessions?: SessionsView
+  /** O id desta sessão, para marcá-la na lista. */
+  selfId?: string
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    'usage-limits': { snapshot: Snapshot | null; session: Totals; economy: boolean; setup: Setup; project: string }
+    'usage-limits': {
+      snapshot: Snapshot | null
+      session: Totals
+      economy: boolean
+      setup: Setup
+      project: string
+      api: ApiSpend | null
+    }
   }
 }

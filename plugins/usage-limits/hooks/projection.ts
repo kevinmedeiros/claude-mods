@@ -283,12 +283,23 @@ export const statusLine = (
   session: Totals,
   costUsd: number | undefined,
   age?: string,
+  extra?: { sessions?: { count: number; tokens: number; costUsd: number }; api?: string },
 ) => {
   const parts = windows.map(statusPart)
   if (age) parts.push(`leitura ${age}`)
-  const usage = [`${compact(totalTokens(session))} tok`]
-  if (costUsd !== undefined) usage.push(usd(costUsd))
-  parts.push(usage.join(' · '))
+  const all = extra?.sessions
+  if (all && all.count > 1) {
+    parts.push(`${all.count} sessões · ${compact(all.tokens)} tok · ${usd(all.costUsd)}`)
+  } else {
+    const usage = [`${compact(totalTokens(session))} tok`]
+    if (costUsd !== undefined) usage.push(usd(costUsd))
+    parts.push(usage.join(' · '))
+  }
+  if (extra?.api) parts.push(extra.api)
 
   return parts.join(' │ ')
 }
+
+/** "API US$ 37/200" para a linha de status. */
+export const apiShort = (spentUsd: number, creditUsd: number) =>
+  `API US$ ${Math.round(spentUsd)}/${Math.round(creditUsd)}`

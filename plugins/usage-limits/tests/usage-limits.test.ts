@@ -3,6 +3,8 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { addToMix, advise, emptyMix } from '../hooks/advisor'
 import { activeHoursPerDay, addActivity, addHourly, recentMix, updateCalibration, weekPerFive } from '../hooks/pace'
+import { costReportUrl, cycleBounds, projectApi, sumCostReport } from '../hooks/api'
+import { sessionsView, upsertSession } from '../hooks/sessions'
 import type { Calibration } from '../hooks/pace'
 import { HOUR, MINUTE, addSample, emptyTotals, project, projectName, projectShares, statusLine, statusPart } from '../hooks/projection'
 
@@ -370,6 +372,8 @@ test('sessão parada usa a leitura mais nova que outra sessão gravou e mostra a
   }
   on('fs.exists', ($, e) => ({ value: e.path === '/Users/k/.claude/usage-limits/latest.json' }))
   on('fs.read', () => ({ value: JSON.stringify(shared) }))
+  on('fs.write', () => ({ value: undefined }))
+  on('session.id', () => ({ value: 'sessao-a' }))
   on('session.usage', () => ({
     value: {
       startedAt: 0,
@@ -380,4 +384,67 @@ test('sessão parada usa a leitura mais nova que outra sessão gravou e mostra a
 
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
   expect(statuses.at(-1)).toMatch(/^5h 40% .* │ Sem 12% .* │ leitura há 20min │ 0 tok$/)
+})
+
+const rec = (id: string, project: string, costUsd: number, minutesAgo: number, ended = false) => ({
+  id,
+  project,
+  model: 'claude-opus-5-5',
+  startedAt: NOW - 3 * HOUR,
+  updatedAt: NOW - minutesAgo * MINUTE,
+  tokens: { input: 1000, output: 2000, cacheRead: 1_000_000, cacheWrite: 0, turns: 3 },
+  costUsd,
+  ended,
+})
+
+test('lista as sessões abertas, o total delas e o total de hoje', () => {
+  let book = upsertSession(undefined, { ...rec('velha', 'x', 9, 0), updatedAt: NOW - 3 * 24 * HOUR }, NOW - 3 * 24 * HOUR)
+  book = upsertSession(book, rec('a', 'MMORPG', 4, 0), NOW)
+  book = upsertSession(book, rec('b', 'licitacao', 6, 1), NOW)
+  book = upsertSession(book, rec('c', 'MODS', 2, 30), NOW) // sem sinal há 30 min: fechada
+  book = upsertSession(book, rec('d', 'Duel', 1, 5, true), NOW) // encerrada
+  expect(Object.keys(book).sort()).toEqual(['a', 'b', 'c', 'd'])
+
+  const view = sessionsView(book, NOW, 'a')
+  expect(view.running.map(r => r.id)).toEqual(['a', 'b'])
+  expect(view.total.count).toBe(2)
+  expect(view.total.costUsd).toBe(10)
+  expect(view.today.count).toBe(4)
+  expect(view.today.costUsd).toBe(13)
+})
+
+test('créditos de API: ciclo, soma do relatório do Console e projeção', () => {
+  const now = new Date(2026, 9, 20, 12).getTime() // 20/10 12h
+  const b = cycleBounds(now, 7)
+  expect(new Date(b.start).getDate()).toBe(7)
+  expect(new Date(b.end).getMonth()).toBe(10)
+  const early = cycleBounds(new Date(2026, 9, 3).getTime(), 7)
+  expect(new Date(early.start).getMonth()).toBe(8) // ainda no ciclo que começou em setembro
+
+  const page = JSON.stringify({
+    data: [
+      { starting_at: '2026-10-07T00:00:00Z', results: [
+        { amount: '1250.5', currency: 'USD', model: 'claude-haiku-5-5', description: 'Claude Haiku 5.5 Usage - Input Tokens' },
+        { amount: '300', currency: 'USD', model: 'claude-haiku-5-5', description: 'Claude Haiku 5.5 Usage - Output Tokens' },
+      ] },
+      { starting_at: '2026-10-08T00:00:00Z', results: [] },
+      { starting_at: '2026-10-09T00:00:00Z', results: [
+        { amount: '449.5', currency: 'USD', model: null, description: 'Web Search Usage' },
+      ] },
+    ],
+    has_more: false,
+    next_page: null,
+  })
+  const sum = sumCostReport(page)
+  expect(sum.usd).toBe(20)
+  expect(sum.byModel['claude-haiku-5-5']).toBe(15.505)
+  expect(sum.byModel['Web Search']).toBe(4.495)
+
+  const spend = projectApi(sum.usd, sum.byModel, b, now, 200)
+  expect(Math.round(spend.dailyUsd * 100) / 100).toBe(1.48)
+  expect(spend.runsOutAt).toBeUndefined()
+  const heavy = projectApi(150, {}, b, now, 200)
+  expect(heavy.runsOutAt).toBeDefined()
+  expect(costReportUrl(b.start, now)).toContain('/v1/organizations/cost_report?starting_at=')
+  expect(costReportUrl(b.start, now)).toContain('group_by[]=description')
 })

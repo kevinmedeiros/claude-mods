@@ -1,13 +1,17 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionRateLimit, SessionUsage, TurnUsage } from 'claude-code'
 
-import type { Advice, Mix, ProjectBucket, Snapshot, Totals, WindowView } from '../types'
+import type { Advice, ApiSpend, Mix, ProjectBucket, SessionRecord, Snapshot, Totals, WindowView } from '../types'
+import { apiProblem, costReportUrl, cycleBounds, projectApi, sumCostReport } from './api'
+import { sessionsView, upsertSession } from './sessions'
+import type { SessionBook } from './sessions'
 import { addToMix, advise, emptyMix } from './advisor'
 import { activeHoursPerDay, addActivity, addHourly, recentMix, updateCalibration, weekPerFive } from './pace'
 import type { Calibration, HourlyMix } from './pace'
 import { HAIKU_ID, costOf, family, modelKey } from './pricing'
 import {
   addSample,
+  apiShort,
   clockTime,
   duration,
   emptyTotals,
@@ -33,6 +37,7 @@ const session = atom({ plugin: 'usage-limits', key: 'session' } as const, emptyT
 const economy = atom({ plugin: 'usage-limits', key: 'economy' } as const, false)
 const setup = atom({ plugin: 'usage-limits', key: 'setup' } as const, {})
 const currentProject = atom({ plugin: 'usage-limits', key: 'project' } as const, '')
+const api = atom({ plugin: 'usage-limits', key: 'api' } as const, null)
 
 type Alerts = { resetsAt: number; sent: string[] }
 
@@ -47,8 +52,91 @@ const ACTIVITY_KEY = 'activity'
 const HOURLY_KEY = 'hourly'
 const WORK_RATE_KEY = 'lastWorkRate'
 
-/** A leitura desta sessão e o arquivo que as sessões da máquina compartilham. */
-const reading = { ownAt: 0, own: [] as SessionRateLimit[], sharedFile: '' }
+/** A leitura desta sessão e os arquivos que as sessões da máquina compartilham. */
+const reading = { ownAt: 0, own: [] as SessionRateLimit[], sharedFile: '', sessionsFile: '', selfId: '', startedAt: 0 }
+
+/** As opções dos créditos de API, do /plugin. */
+const apiConfig = { key: '', creditUsd: 200, cycleDay: 1 }
+
+const readBook = async ($: EngineInterface): Promise<SessionBook | undefined> => {
+  if (!reading.sessionsFile) return undefined
+  try {
+    if (!(await $.fs.exists(reading.sessionsFile))) return undefined
+    const raw = JSON.parse(await $.fs.read(reading.sessionsFile)) as Record<string, unknown>
+    const book: SessionBook = {}
+    for (const [id, r] of Object.entries(raw ?? {})) {
+      const rec = r as Partial<SessionRecord> | null
+      if (rec && typeof rec === 'object' && rec.id === id && typeof rec.updatedAt === 'number' && rec.tokens) {
+        book[id] = rec as SessionRecord
+      }
+    }
+    return book
+  } catch {
+    return undefined
+  }
+}
+
+/** Grava o consumo desta sessão no livro de sessões da máquina e devolve o livro. */
+const writeSelf = async ($: EngineInterface, costUsd: number | undefined, ended = false) => {
+  if (!reading.sessionsFile || !reading.selfId) return undefined
+  const now = await $.clock.now()
+  const held = await readBook($)
+  const previous = held?.[reading.selfId]
+  const record: SessionRecord = {
+    id: reading.selfId,
+    project: await read($, currentProject),
+    model: (await read($, setup)).mainModel,
+    startedAt: reading.startedAt || now,
+    updatedAt: now,
+    tokens: await read($, session),
+    costUsd: costUsd ?? previous?.costUsd ?? 0,
+    ended,
+  }
+  const book = upsertSession(held, record, now)
+  try {
+    await $.fs.write(reading.sessionsFile, JSON.stringify(book))
+  } catch {
+    // Sem o arquivo, a lista mostra só esta sessão.
+  }
+
+  return book
+}
+
+/** Lê do Console quanto dos créditos de API o ciclo já gastou. */
+const refreshApi = async ($: EngineInterface) => {
+  if (!apiConfig.key) return
+  const now = await $.clock.now()
+  const bounds = cycleBounds(now, apiConfig.cycleDay)
+  let usdTotal = 0
+  const byModel: Record<string, number> = {}
+  let page: string | undefined
+  try {
+    for (let i = 0; i < 5; i++) {
+      const r = await $.http.fetch(costReportUrl(bounds.start, now, page), {
+        headers: { 'x-api-key': apiConfig.key, 'anthropic-version': '2023-06-01', 'user-agent': 'usage-limits-mod/0.5' },
+      })
+      if (!r.ok) {
+        const held = await read($, api)
+        await update($, api, () => ({ ...(held ?? projectApi(0, {}, bounds, now, apiConfig.creditUsd)), problem: apiProblem(r.status, r.text) }))
+        return
+      }
+      const pageSum = sumCostReport(r.text)
+      usdTotal += pageSum.usd
+      for (const [m, v] of Object.entries(pageSum.byModel)) byModel[m] = (byModel[m] ?? 0) + v
+      page = pageSum.next
+      if (!page) break
+    }
+    await update($, api, () => projectApi(usdTotal, byModel, bounds, now, apiConfig.creditUsd))
+  } catch (error) {
+    const held = await read($, api)
+    await update($, api, () => ({
+      ...(held ?? projectApi(0, {}, bounds, now, apiConfig.creditUsd)),
+      problem: `Não consegui falar com o Console: ${String(error).slice(0, 120)}`,
+    }))
+  }
+}
+
+const apiStatus = (spend: ApiSpend | null) => (spend && !spend.problem ? apiShort(spend.spentUsd, spend.creditUsd) : undefined)
 
 type SharedReading = { at: number; rateLimits: SessionRateLimit[] }
 
@@ -144,6 +232,8 @@ const refresh = async ($: EngineInterface, usage: SessionUsage, record: boolean)
   }
 
   const recent = recentMix((await $.store.get(HOURLY_KEY)) as HourlyMix | undefined, now, 0)
+  const book = await writeSelf($, usage.cost?.usd)
+  const sessions = reading.selfId ? sessionsView(book, now, reading.selfId) : undefined
   const next: Snapshot = {
     updatedAt: now,
     windows,
@@ -152,9 +242,20 @@ const refresh = async ($: EngineInterface, usage: SessionUsage, record: boolean)
     advice: advise(windows, mixes, await read($, setup), recent),
     readAt,
     isSharedReading: isShared,
+    sessions,
+    selfId: reading.selfId,
   }
   await update($, snapshot, () => next)
-  $.ui.status(statusLine(windows, await read($, session), next.costUsd, readingAge(readAt, now)))
+  $.ui.status(
+    statusLine(windows, await read($, session), next.costUsd, readingAge(readAt, now), {
+      sessions: sessions && {
+        count: sessions.total.count,
+        tokens: totalTokens(sessions.total.tokens),
+        costUsd: sessions.total.costUsd,
+      },
+      api: apiStatus(await read($, api)),
+    }),
+  )
   await alert($, windows, now, next.advice)
 }
 
@@ -293,9 +394,14 @@ const viewData = async ($: EngineInterface, snap: Snapshot): Promise<ViewData> =
   snap,
   totals: await read($, session),
   economy: await read($, economy),
+  api: await read($, api),
 })
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  apiConfig.key = String(options.adminApiKey ?? '').trim()
+  apiConfig.creditUsd = Number(options.apiMonthlyCredit ?? 200)
+  apiConfig.cycleDay = Number(options.apiCycleDay ?? 1)
+
   /** Subagentes já decididos: true roda em Haiku. Um agente nunca troca no meio. */
   const haikuAgents = new Map<string, boolean>()
   const forks = new Set<string>()
@@ -303,7 +409,11 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
-    reading.sharedFile = home ? `${home.replaceAll('\\', '/')}/.claude/usage-limits/latest.json` : ''
+    const dir = home ? `${home.replaceAll('\\', '/')}/.claude/usage-limits` : ''
+    reading.sharedFile = dir ? `${dir}/latest.json` : ''
+    reading.sessionsFile = dir ? `${dir}/sessions.json` : ''
+    reading.selfId = await $.session.id()
+    reading.startedAt = (await $.session.usage()).startedAt
     const name = await findProject($, started.cwd)
     await update($, currentProject, () => name)
     await $.command.register({
@@ -320,6 +430,10 @@ export const register: Register = on => {
     $.clock.every(60_000, () => {
       void $.session.usage().then(usage => refresh($, usage, false))
     })
+    if (apiConfig.key) {
+      void refreshApi($)
+      $.clock.every(10 * 60_000, () => void refreshApi($))
+    }
 
     return started
   })
@@ -387,13 +501,29 @@ export const register: Register = on => {
       }))
       await countTokens($, totalTokens(add))
       const last = await read($, snapshot)
-      $.ui.status(statusLine(last?.windows ?? [], totals, last?.costUsd, readingAge(last?.readAt, await $.clock.now())))
+      await writeSelf($, last?.costUsd)
+      $.ui.status(
+        statusLine(last?.windows ?? [], totals, last?.costUsd, readingAge(last?.readAt, await $.clock.now()), {
+          api: apiStatus(await read($, api)),
+        }),
+      )
     }
 
     return result
   })
 
+  // Ao fechar: marca a sessão como encerrada na lista da máquina (dentro do tempo curto do fim).
+  on('session.end', async ($, e, next) => {
+    try {
+      await writeSelf($, (await read($, snapshot))?.costUsd, true)
+    } catch {
+      // O fim da sessão não espera pelo mod.
+    }
+    return next(e)
+  })
+
   on('command.run', { command: COMMAND }, async $ => {
+    if (apiConfig.key) void refreshApi($)
     await refresh($, await $.session.usage(), false)
     await $.ui.open({ id: PANE, title: 'Limites' })
 

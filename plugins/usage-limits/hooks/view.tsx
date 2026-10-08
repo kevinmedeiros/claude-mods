@@ -1,8 +1,8 @@
 import type { Elements } from 'claude-code'
 
-import type { Advice, ProjectShare, Snapshot, Totals, WindowView } from '../types'
+import type { Advice, ApiSpend, ProjectShare, SessionRecord, Snapshot, Totals, WindowView } from '../types'
 import { changesMain, usesSubHaiku } from './advisor'
-import { modelLabel } from './pricing'
+import { modelKey, modelLabel } from './pricing'
 import {
   HOUR,
   bar,
@@ -26,7 +26,7 @@ type RichUi = Pick<Elements['desktop'], 'Box' | 'Text' | 'Svg' | 'Button'>
 /** Caixas, texto e botões: o que todas as superfícies desenham. */
 type BasicUi = Pick<TerminalUi, 'Box' | 'Text' | 'Button'>
 
-export type ViewData = { snap: Snapshot; totals: Totals; economy: boolean }
+export type ViewData = { snap: Snapshot; totals: Totals; economy: boolean; api: ApiSpend | null }
 
 /** O que os botões fazem; `details` só existe fora do painel. */
 export type Actions = {
@@ -129,6 +129,91 @@ const ProjectList = (ui: BasicUi, w: WindowView, indent: string) => {
 
 const EMPTY =
   'Sem dados de limite ainda: eles chegam com a primeira resposta da API e só existem em planos de assinatura (Pro/Max).'
+
+// ---------- sessões e créditos de API ----------
+
+const sessionRow = (r: SessionRecord, totalCost: number, isSelf: boolean) => {
+  const model = r.model ? modelLabel(modelKey(r.model)) : '—'
+  const share = totalCost > 0 ? ` · ${percent((r.costUsd / totalCost) * 100)}` : ''
+
+  return `${isSelf ? '●' : '○'} ${r.project.padEnd(16).slice(0, 16)} ${model.padEnd(11)} ${compact(totalTokens(r.tokens)).padStart(6)} tok  ${usd(r.costUsd)}${share}${isSelf ? '  (esta)' : ''}`
+}
+
+/** As sessões abertas nesta máquina, o total delas e o total de hoje. */
+const SessionsList = (ui: BasicUi, snap: Snapshot) => {
+  const { Box, Text } = ui
+  const view = snap.sessions
+  if (!view) return <Text dimColor>Lista de sessões indisponível nesta máquina.</Text>
+
+  return (
+    <Box key="sessions-list" flexDirection="column">
+      {view.running.map(r => (
+        <Text key={r.id} bold={r.id === snap.selfId}>
+          {sessionRow(r, view.total.costUsd, r.id === snap.selfId)}
+        </Text>
+      ))}
+      <Text bold>
+        Total ({view.total.count} {view.total.count === 1 ? 'sessão aberta' : 'sessões abertas'}): {compact(totalTokens(view.total.tokens))} tok ·{' '}
+        {usd(view.total.costUsd)}
+      </Text>
+      <Text dimColor>
+        Hoje nesta máquina, fechadas inclusive: {view.today.count} sessões · {compact(totalTokens(view.today.tokens))} tok ·{' '}
+        {usd(view.today.costUsd)}
+      </Text>
+      <Text dimColor>Custo equivalente em preço de API; no plano, o que conta são os limites de 5h e semanal.</Text>
+    </Box>
+  )
+}
+
+const dayMonth = (t: number) => {
+  const d = new Date(t)
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+/** Os créditos de API do Console: gasto, ritmo e quando acabam. */
+const ApiCard = (ui: BasicUi, spend: ApiSpend | null, now: number) => {
+  const { Box, Text } = ui
+  if (!spend) return undefined
+  const pct = spend.creditUsd > 0 ? (spend.spentUsd / spend.creditUsd) * 100 : 0
+  const color = spend.runsOutAt !== undefined ? 'error' : spend.projectedUsd > spend.creditUsd * 0.85 ? 'warning' : 'success'
+
+  return (
+    <Box key="api" flexDirection="column" borderStyle="round" borderColor={spend.problem ? 'warning' : color} paddingX={1}>
+      <Text bold>Créditos de API (Console)</Text>
+      {spend.problem && <Text color="warning">{spend.problem}</Text>}
+      <Text>
+        <Text color={color}>{bar(pct, 20)}</Text> {usd(spend.spentUsd)} de {usd(spend.creditUsd)} · {percent(pct)}
+      </Text>
+      <Text dimColor>
+        Ciclo {dayMonth(spend.cycleStart)} a {dayMonth(spend.cycleEnd)} · {usd(spend.dailyUsd)}/dia · renova em{' '}
+        {Math.max(0, Math.ceil((spend.cycleEnd - now) / 86_400_000))} dias
+      </Text>
+      <Text color={color}>
+        {spend.runsOutAt !== undefined
+          ? `⚠ Nesse ritmo o crédito acaba ~${dayMonth(spend.runsOutAt)}, antes de renovar; depois as chamadas param (ou usam crédito comprado).`
+          : `✓ Nesse ritmo o ciclo fecha com ~${usd(spend.projectedUsd)} gastos.`}
+      </Text>
+      {spend.byModel.slice(0, 5).map(m => (
+        <Text key={m.model} dimColor>
+          {'  '}
+          {m.model}: {usd(m.usd)}
+        </Text>
+      ))}
+      <Text dimColor>Não conta nos limites de 5h e semanal do plano. Atualiza a cada 10 min (o Console leva ~5 min).</Text>
+    </Box>
+  )
+}
+
+/** "3 sessões · 4.2M tokens · US$ 12,40" ou, sozinha, os números desta. */
+const usageSummary = (snap: Snapshot, totals: Totals, api: ApiSpend | null) => {
+  const all = snap.sessions?.total
+  const head =
+    all && all.count > 1
+      ? `${all.count} sessões · ${compact(totalTokens(all.tokens))} tokens · ${usd(all.costUsd)}`
+      : `${compact(totalTokens(totals))} tokens${snap.costUsd !== undefined ? ` · ${usd(snap.costUsd)}` : ''}`
+
+  return api && !api.problem ? `${head} · API ${usd(api.spentUsd)}/${Math.round(api.creditUsd)}` : head
+}
 
 // ---------- recomendação de modelo ----------
 
@@ -293,6 +378,8 @@ const SessionCard = (ui: RichUi, { snap, totals }: ViewData, px: number) => {
 
   return (
     <Box key="session" flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>
+      <Text bold>Sessões</Text>
+      {SessionsList(ui, snap)}
       <Text bold>Esta sessão</Text>
       <Box flexDirection="row" columnGap={3} flexWrap="wrap">
         {Stat(ui, 'tokens', 'Tokens', compact(tokens))}
@@ -333,6 +420,7 @@ export const RichPane = (ui: RichUi, data: ViewData, columns: number, actions: A
       {snap.windows.map(w => WindowCard(ui, w, now, px))}
       {AdviceCard(ui, snap.advice, data.economy, actions)}
       {SessionCard(ui, data, px)}
+      {ApiCard(ui, data.api, now)}
       <Text dimColor>
         Barra cheia: uso · hachura: projeção até o reset · traço: onde o uso estaria num ritmo uniforme
       </Text>
@@ -367,8 +455,7 @@ export const RichBand = (ui: RichUi, data: ViewData, actions: Actions) => {
         </Box>
       ))}
       <Text dimColor>
-        {compact(totalTokens(totals))} tokens
-        {snap.costUsd !== undefined && ` · ${usd(snap.costUsd)}`}
+        {usageSummary(snap, totals, data.api)}
         {readingAge(snap.readAt, now) !== undefined && ` · leitura ${readingAge(snap.readAt, now)}`}
       </Text>
     </Box>
@@ -380,7 +467,7 @@ export const RichBand = (ui: RichUi, data: ViewData, actions: Actions) => {
 // ---------- terminal ----------
 
 /** Faixa acima do prompt no terminal: um item por limite, quebrando linha se faltar largura. */
-export const TerminalBand = (ui: TerminalUi, { snap, totals, economy }: ViewData, actions: Actions) => {
+export const TerminalBand = (ui: TerminalUi, { snap, totals, economy, api }: ViewData, actions: Actions) => {
   const { Box, Text } = ui
 
   return (
@@ -398,8 +485,7 @@ export const TerminalBand = (ui: TerminalUi, { snap, totals, economy }: ViewData
         </Text>
       ))}
       <Text key="session" dimColor>
-        {compact(totalTokens(totals))} tokens
-        {snap.costUsd !== undefined && ` · ${usd(snap.costUsd)}`}
+        {usageSummary(snap, totals, api)}
         {readingAge(snap.readAt, snap.updatedAt) !== undefined && ` · leitura ${readingAge(snap.readAt, snap.updatedAt)}`} · /limites
       </Text>
     </Box>
@@ -409,7 +495,7 @@ export const TerminalBand = (ui: TerminalUi, { snap, totals, economy }: ViewData
 }
 
 /** Painel `/limites` no terminal: só texto. */
-export const TerminalPane = (ui: TerminalUi, { snap, totals, economy }: ViewData, columns: number, actions: Actions) => {
+export const TerminalPane = (ui: TerminalUi, { snap, totals, economy, api }: ViewData, columns: number, actions: Actions) => {
   const { Box, Text } = ui
   const now = snap.updatedAt
   const width = Math.max(10, Math.min(30, columns - 30))
@@ -451,6 +537,11 @@ export const TerminalPane = (ui: TerminalUi, { snap, totals, economy }: ViewData
         )
       })}
       <Box marginTop={1}>{AdviceCard(ui, snap.advice, economy, actions)}</Box>
+      <Box flexDirection="column" marginTop={1}>
+        <Text bold>Sessões</Text>
+        {SessionsList(ui, snap)}
+      </Box>
+      {ApiCard(ui, api, now) !== undefined && <Box marginTop={1}>{ApiCard(ui, api, now)}</Box>}
       <Box flexDirection="column" marginTop={1}>
         <Text bold>Esta sessão</Text>
         <Text>

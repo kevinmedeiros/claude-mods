@@ -1,9 +1,30 @@
 {
   "name": "usage-limits",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Consumo de tokens, custo, previsão dos limites de 5h e semanal e recomendação de modelo",
   "types": "./types/index.d.ts",
   "author": {
     "name": "Kevin Medeiros"
+  },
+  "userConfig": {
+    "adminApiKey": {
+      "type": "string",
+      "title": "Admin API key do Console (opcional)",
+      "description": "sk-ant-admin… da organização ligada aos créditos de API. Liga o cartão de créditos de API",
+      "default": "",
+      "sensitive": true
+    },
+    "apiMonthlyCredit": {
+      "type": "number",
+      "title": "Crédito mensal de API (US$)",
+      "description": "Max 5x: 100 · Max 20x: 200",
+      "default": 200
+    },
+    "apiCycleDay": {
+      "type": "number",
+      "title": "Dia em que o crédito renova",
+      "description": "Dia do mês do ciclo de cobrança do plano",
+      "default": 1
+    }
   }
 }
