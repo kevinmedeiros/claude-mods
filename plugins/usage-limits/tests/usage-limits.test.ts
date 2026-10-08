@@ -374,6 +374,7 @@ test('sessão parada usa a leitura mais nova que outra sessão gravou e mostra a
   on('fs.read', () => ({ value: JSON.stringify(shared) }))
   on('fs.write', () => ({ value: undefined }))
   on('session.id', () => ({ value: 'sessao-a' }))
+  on('session.model', () => ({ value: 'claude-opus-5-5' }))
   on('session.usage', () => ({
     value: {
       startedAt: 0,

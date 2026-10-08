@@ -444,6 +444,13 @@ export const register: Register = (on, options) => {
     })
     const isEconomy = (await $.store.get(ECONOMY_KEY)) === true
     await update($, economy, () => isEconomy)
+    // O modelo da sessão já ao abrir, para a recomendação não dizer "o modelo atual".
+    try {
+      const model = await $.session.model()
+      if (model) await update($, setup, held => (held.mainModel ? held : { ...held, mainModel: model }))
+    } catch {
+      // Sem o modelo agora, ele chega na primeira resposta.
+    }
     await refresh($, await $.session.usage(), false)
     $.clock.every(60_000, () => {
       void $.session.usage().then(usage => refresh($, usage, false))
