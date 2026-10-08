@@ -1,0 +1,39 @@
+{
+  "name": "blender-preview",
+  "version": "0.1.0",
+  "description": "Prévia da cena do Blender no Claude Code e checagem de GLB contra os orçamentos do jogo",
+  "author": { "name": "Kevin Medeiros" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "server": {
+      "type": "string",
+      "title": "Servidor MCP do Blender",
+      "description": "Nome do servidor como o /mcp lista",
+      "default": "Blender"
+    },
+    "autoPreview": {
+      "type": "boolean",
+      "title": "Atualizar a prévia sozinho",
+      "description": "Mede a cena e renderiza a miniatura depois de cada mudança feita pelo Blender MCP",
+      "default": true
+    },
+    "maxTriangles": {
+      "type": "number",
+      "title": "Orçamento de triângulos",
+      "description": "Por cena ou por GLB exportado",
+      "default": 20000
+    },
+    "maxBones": {
+      "type": "number",
+      "title": "Máximo de ossos",
+      "description": "Por esqueleto",
+      "default": 100
+    },
+    "maxTextureSize": {
+      "type": "number",
+      "title": "Maior lado de textura",
+      "description": "Em pixels",
+      "default": 2048
+    }
+  }
+}

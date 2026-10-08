@@ -1,9 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionRateLimit, SessionUsage, TurnUsage } from 'claude-code'
 
-import type { Advice, Mix, Snapshot, Totals, WindowView } from '../types'
+import type { Advice, Mix, ProjectBucket, Snapshot, Totals, WindowView } from '../types'
 import { addToMix, advise, emptyMix } from './advisor'
-import { HAIKU_ID, family, modelKey } from './pricing'
+import { HAIKU_ID, costOf, family, modelKey } from './pricing'
 import {
   addSample,
   clockTime,
@@ -11,6 +11,8 @@ import {
   emptyTotals,
   percent,
   project,
+  projectName,
+  projectShares,
   sameWindow,
   statusLine,
   totalTokens,
@@ -27,6 +29,7 @@ const snapshot = atom({ plugin: 'usage-limits', key: 'snapshot' } as const, null
 const session = atom({ plugin: 'usage-limits', key: 'session' } as const, emptyTotals())
 const economy = atom({ plugin: 'usage-limits', key: 'economy' } as const, false)
 const setup = atom({ plugin: 'usage-limits', key: 'setup' } as const, {})
+const currentProject = atom({ plugin: 'usage-limits', key: 'project' } as const, '')
 
 type Alerts = { resetsAt: number; sent: string[] }
 
@@ -34,6 +37,7 @@ const samplesKey = (kind: string) => `samples:${kind}`
 const bucketKey = (kind: string) => `tokens:${kind}`
 const alertsKey = (kind: string) => `alerts:${kind}`
 const mixKey = (kind: string) => `mix:${kind}`
+const projectsKey = (kind: string) => `projects:${kind}`
 const ECONOMY_KEY = 'economy'
 
 const resetOf = (w: SessionRateLimit) => (w.resetsAt ? Date.parse(w.resetsAt) : NaN)
@@ -61,6 +65,10 @@ const refresh = async ($: EngineInterface, usage: SessionUsage, record: boolean)
     const view = project(raw, now, log, bucket)
     windows.push(view)
     mixes[raw.kind] = await loadMix($, view)
+    const projects = (await $.store.get(projectsKey(raw.kind))) as ProjectBucket | undefined
+    if (projects && view.resetsAt !== undefined && sameWindow(projects.resetsAt, view.resetsAt)) {
+      view.projects = projectShares(projects, view.pct)
+    }
   }
 
   const next: Snapshot = {
@@ -142,6 +150,40 @@ const countMix = async ($: EngineInterface, role: 'main' | 'sub', usage: TurnUsa
   }
 }
 
+/** Soma o custo de uma resposta ao projeto da sessão em cada janela aberta. */
+const countProject = async ($: EngineInterface, usage: TurnUsage) => {
+  const name = await read($, currentProject)
+  const last = await read($, snapshot)
+  if (!name) return
+  const cost = costOf(
+    {
+      input: usage.input_tokens,
+      output: usage.output_tokens,
+      cacheRead: usage.cache_read_input_tokens,
+      cacheWrite: usage.cache_creation_input_tokens,
+    },
+    modelKey(usage.model),
+  )
+  for (const w of last?.windows ?? []) {
+    if (w.resetsAt === undefined) continue
+    const held = (await $.store.get(projectsKey(w.kind))) as ProjectBucket | undefined
+    const bucket: ProjectBucket =
+      held && sameWindow(held.resetsAt, w.resetsAt) ? held : { resetsAt: w.resetsAt, firstPct: w.pct, byProject: {} }
+    bucket.byProject[name] = (bucket.byProject[name] ?? 0) + cost
+    await $.store.set(projectsKey(w.kind), bucket)
+  }
+}
+
+/** Raiz do git da pasta da sessão, ou a própria pasta. */
+const findProject = async ($: EngineInterface, cwd: string) => {
+  try {
+    const { exitCode, stdout } = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { cwd, timeoutMs: 5000 })
+    return projectName(exitCode === 0 && stdout.trim() ? stdout.trim() : cwd)
+  } catch {
+    return projectName(cwd)
+  }
+}
+
 const setEconomy = async ($: EngineInterface, on: boolean) => {
   await update($, economy, () => on)
   await $.store.set(ECONOMY_KEY, on)
@@ -171,6 +213,8 @@ export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     const started = await next(e)
+    const name = await findProject($, started.cwd)
+    await update($, currentProject, () => name)
     await $.command.register({
       name: COMMAND,
       description: 'Mostra consumo de tokens, previsão dos limites e qual modelo usar',
@@ -223,7 +267,10 @@ export const register: Register = on => {
     }
 
     const result = yield* next(step)
-    if (result.usage) await countMix($, e.agentId ? 'sub' : 'main', result.usage)
+    if (result.usage) {
+      await countMix($, e.agentId ? 'sub' : 'main', result.usage)
+      await countProject($, result.usage)
+    }
 
     return result
   })
@@ -289,14 +336,30 @@ export const register: Register = on => {
   })
 
   // Faixa acima do prompt: barras SVG no desktop, texto no terminal.
+  // Empilha sobre o que outros plugins desenham na faixa, em vez de substituir.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey) return next(e)
+    const below = await next(e)
+    if (e.props.hasSurvey) return below
     const snap = await read($, snapshot)
-    if (snap === null || snap.windows.length === 0) return next(e)
+    if (snap === null || snap.windows.length === 0) return below
     const data = await viewData($, snap)
-    if (e.surface === 'terminal') return TerminalBand($.ui.resolve(e), data, actionsFor($, true))
-    if (e.surface !== 'desktop') return next(e)
+    if (e.surface === 'terminal') {
+      const ui = $.ui.resolve(e)
+      return (
+        <ui.Box flexDirection="column">
+          {TerminalBand(ui, data, actionsFor($, true))}
+          {below}
+        </ui.Box>
+      )
+    }
+    if (e.surface !== 'desktop') return below
+    const ui = $.ui.resolve(e)
 
-    return RichBand($.ui.resolve(e), data, actionsFor($, true))
+    return (
+      <ui.Box flexDirection="column">
+        {RichBand(ui, data, actionsFor($, true))}
+        {below}
+      </ui.Box>
+    )
   })
 }

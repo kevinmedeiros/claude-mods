@@ -2,7 +2,7 @@ import type { On, RenderElement } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { addToMix, advise, emptyMix } from '../hooks/advisor'
-import { HOUR, MINUTE, addSample, emptyTotals, project, statusLine } from '../hooks/projection'
+import { HOUR, MINUTE, addSample, emptyTotals, project, projectName, projectShares, statusLine } from '../hooks/projection'
 
 const NOW = Date.parse('2026-10-08T12:00:00Z')
 const iso = (t: number) => new Date(t).toISOString()
@@ -255,4 +255,23 @@ test('modo economia põe subagentes em Haiku e mantém o principal', async ($, o
   await run(STEP)
 
   expect(models).toEqual(['claude-opus-5-5', 'claude-haiku-5-5', 'claude-opus-5-5', 'claude-opus-5-5'])
+})
+
+test('orçamento por projeto: nome e divisão do gasto', () => {
+  expect(projectName('/Users/kevinm/MMORPG')).toBe('MMORPG')
+  expect(projectName('/Users/kevinm/Duel/.claude/worktrees/sad-kirch')).toBe('Duel')
+  expect(projectName('C:\\dev\\Jogo\\workdir')).toBe('Jogo')
+  const shares = projectShares({ resetsAt: 0, firstPct: 10, byProject: { MMORPG: 6, Enco: 3, MODS: 1 } }, 40)
+  expect(shares.map(s => s.name)).toEqual(['MMORPG', 'Enco', 'MODS'])
+  expect(shares[0]?.share).toBe(0.6)
+  expect(shares[0]?.points).toBe(18)
+})
+
+test('semanal recém-começado: o ritmo é por dia, não pelas primeiras horas', () => {
+  // Como na sessão real: 7% nas primeiras 5h de uma semana que reseta em 163h.
+  const w = project({ kind: 'seven_day', percentUsed: 7, resetsAt: iso(NOW + 163 * HOUR) }, NOW)
+  expect(Math.round(w.pctAtReset ?? 0)).toBe(55)
+  expect(w.verdict).toBe('ok')
+  const fiveHour = project({ kind: 'five_hour', percentUsed: 26, resetsAt: iso(NOW + 1.6 * HOUR) }, NOW)
+  expect(Math.round(fiveHour.hoursLeft ?? 0)).toBe(10)
 })

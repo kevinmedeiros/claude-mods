@@ -1,4 +1,4 @@
-import type { Totals, Verdict, WindowView } from '../types'
+import type { ProjectBucket, ProjectShare, Totals, Verdict, WindowView } from '../types'
 
 export const MINUTE = 60_000
 export const HOUR = 60 * MINUTE
@@ -30,6 +30,12 @@ export const windowLength = (kind: string): number | undefined =>
 
 /** Quanto tempo de histórico vale como "ritmo atual". */
 const recentLookback = (length: number) => (length <= 5 * HOUR ? HOUR : DAY)
+
+/**
+ * O menor período por onde dividir o uso. No semanal o ritmo é por dia: as
+ * primeiras horas de trabalho não valem para as noites e pausas da semana.
+ */
+const minPeriod = (length: number) => (length <= 5 * HOUR ? 5 * MINUTE : DAY)
 
 export const windowLabel = (kind: string): string => {
   if (kind === 'five_hour') return '5 horas'
@@ -71,6 +77,7 @@ export const recentRate = (
   pctNow: number,
   now: number,
   lookback: number,
+  floor = 0,
 ): number | undefined => {
   const from = now - lookback
   const before = [...points].reverse().find(p => p.t <= from)
@@ -79,7 +86,7 @@ export const recentRate = (
   const span = now - start.t
   if (span < Math.min(lookback / 4, 2 * HOUR)) return undefined
 
-  return Math.max(0, ((pctNow - start.pct) / span) * HOUR)
+  return Math.max(0, ((pctNow - start.pct) / Math.max(span, floor)) * HOUR)
 }
 
 export const project = (
@@ -115,11 +122,11 @@ export const project = (
   }
   if (length === undefined) return view
 
-  const elapsed = Math.max(5 * MINUTE, now - (resetsAt - length))
+  const elapsed = Math.max(minPeriod(length), now - (resetsAt - length))
   view.windowRatePerHour = (pct / elapsed) * HOUR
 
   const points = log && sameWindow(log.resetsAt, resetsAt) ? log.points : []
-  view.recentRatePerHour = recentRate(points, pct, now, recentLookback(length))
+  view.recentRatePerHour = recentRate(points, pct, now, recentLookback(length), minPeriod(length))
 
   const rate = view.recentRatePerHour ?? view.windowRatePerHour
   view.rateSource = view.recentRatePerHour !== undefined ? 'recent' : 'window'
@@ -137,6 +144,32 @@ export const project = (
 
 const verdictOf = (pctAtReset: number): Verdict =>
   pctAtReset >= 100 ? 'exhausts' : pctAtReset >= 85 ? 'tight' : 'ok'
+
+/** Divide o que a janela andou entre os projetos, pela fração do gasto de cada um. */
+export const projectShares = (bucket: ProjectBucket | undefined, pct: number): ProjectShare[] => {
+  if (!bucket) return []
+  const total = Object.values(bucket.byProject).reduce((sum, n) => sum + n, 0)
+  if (total <= 0) return []
+  const moved = pct - bucket.firstPct
+
+  return Object.entries(bucket.byProject)
+    .map(([name, cost]) => ({
+      name,
+      share: cost / total,
+      points: moved >= 1 ? (cost / total) * moved : undefined,
+    }))
+    .sort((a, b) => b.share - a.share)
+}
+
+/** Nome curto do projeto a partir da raiz do git ou da pasta da sessão. */
+export const projectName = (dir: string): string => {
+  const clean = dir.replace(/[\\/]+$/, '').replace(/[\\/]\.claude[\\/]worktrees[\\/].*$/, '')
+  const parts = clean.split(/[\\/]/).filter(Boolean)
+  const last = parts[parts.length - 1] ?? dir
+  const generic = ['workdir', 'workspace', 'src', 'app', 'repo']
+
+  return generic.includes(last.toLowerCase()) && parts.length > 1 ? (parts[parts.length - 2] ?? last) : last
+}
 
 // ---------- formatação ----------
 

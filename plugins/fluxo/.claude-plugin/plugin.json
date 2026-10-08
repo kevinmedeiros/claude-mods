@@ -1,0 +1,39 @@
+{
+  "name": "fluxo",
+  "version": "0.1.0",
+  "description": "Passagem de bastão entre máquinas (/handoff) e aviso quando um turno longo termina",
+  "author": { "name": "Kevin Medeiros" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "longTurnMinutes": {
+      "type": "number",
+      "title": "Turno longo (minutos)",
+      "description": "Avisa quando um turno do fio principal passa deste tempo",
+      "default": 3
+    },
+    "sound": {
+      "type": "boolean",
+      "title": "Som no fim do turno longo",
+      "description": "Toca um som curto (macOS) quando um turno longo termina",
+      "default": true
+    },
+    "speak": {
+      "type": "boolean",
+      "title": "Falar no fim do turno longo",
+      "description": "Diz em voz alta que o turno terminou",
+      "default": false
+    },
+    "autoHandoff": {
+      "type": "boolean",
+      "title": "Handoff automático",
+      "description": "Atualiza o arquivo de handoff depois de cada turno que editou arquivos",
+      "default": true
+    },
+    "handoffPath": {
+      "type": "string",
+      "title": "Arquivo de handoff",
+      "description": "Caminho relativo à raiz do projeto",
+      "default": ".claude/handoff.md"
+    }
+  }
+}

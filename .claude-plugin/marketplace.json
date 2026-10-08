@@ -1,11 +1,27 @@
 {
   "name": "kevin-mods",
   "owner": { "name": "Kevin Medeiros" },
+  "metadata": { "description": "Mods do Claude Code do Kevin: limites de uso, fluxo entre máquinas, Unity e Blender" },
   "plugins": [
     {
       "name": "usage-limits",
-      "source": "./",
-      "description": "Consumo de tokens, custo, previsão dos limites de 5h e semanal e recomendação de modelo"
+      "source": "./plugins/usage-limits",
+      "description": "Limites de 5h e semanal, custo, duração estimada, orçamento por projeto e recomendação de modelo"
+    },
+    {
+      "name": "fluxo",
+      "source": "./plugins/fluxo",
+      "description": "Passagem de bastão entre máquinas (/handoff) e aviso quando um turno longo termina"
+    },
+    {
+      "name": "unity-tools",
+      "source": "./plugins/unity-tools",
+      "description": "Unity: erros de compilação no contexto, testes em batch, build do servidor e guardas de arquivos"
+    },
+    {
+      "name": "blender-preview",
+      "source": "./plugins/blender-preview",
+      "description": "Prévia da cena do Blender e checagem de GLB contra os orçamentos do jogo"
     }
   ]
 }

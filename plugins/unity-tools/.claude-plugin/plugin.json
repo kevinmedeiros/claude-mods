@@ -1,0 +1,51 @@
+{
+  "name": "unity-tools",
+  "version": "0.1.0",
+  "description": "Unity no Claude Code: erros de compilação no contexto, painel de testes, build do servidor e guardas de arquivos",
+  "author": { "name": "Kevin Medeiros" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "projectPath": {
+      "type": "string",
+      "title": "Projeto Unity",
+      "description": "Pasta do projeto (a que tem ProjectSettings). Vazio: procura a partir da pasta da sessão",
+      "default": ""
+    },
+    "unityPath": {
+      "type": "string",
+      "title": "Executável do Unity",
+      "description": "Vazio: usa o editor do Unity Hub na versão do projeto",
+      "default": ""
+    },
+    "coreDir": {
+      "type": "string",
+      "title": "Pasta do núcleo sem engine",
+      "description": "Relativa ao projeto; código aqui não pode usar UnityEngine. Vazio desliga a guarda",
+      "default": "Assets/Scripts/Core"
+    },
+    "compileCheck": {
+      "type": "boolean",
+      "title": "Checar compilação ao editar .cs",
+      "description": "Roda dotnet build no assembly do arquivo e entrega os erros ao Claude",
+      "default": true
+    },
+    "allowSceneEdits": {
+      "type": "boolean",
+      "title": "Permitir editar .unity e .prefab",
+      "description": "Desligado, o Claude precisa alterar cenas e prefabs por script de editor",
+      "default": false
+    },
+    "serverBuildPath": {
+      "type": "string",
+      "title": "Saída do build do servidor",
+      "description": "Relativa ao projeto",
+      "default": "Builds/Server/AwakenFrontServer.x86_64"
+    },
+    "buildMethod": {
+      "type": "string",
+      "title": "Método de build (opcional)",
+      "description": "Ex.: AwakenFront.Editor.BuildServer.Build. Vazio: usa -buildLinux64Player com as cenas do Build Settings",
+      "default": ""
+    }
+  }
+}

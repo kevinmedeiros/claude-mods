@@ -1,6 +1,6 @@
 import type { Elements } from 'claude-code'
 
-import type { Advice, Snapshot, Totals, WindowView } from '../types'
+import type { Advice, ProjectShare, Snapshot, Totals, WindowView } from '../types'
 import { changesMain, usesSubHaiku } from './advisor'
 import { modelLabel } from './pricing'
 import {
@@ -86,6 +86,30 @@ const tokensLine = (w: WindowView) =>
       (w.tokensPerPct !== undefined
         ? ` · ≈${compact(w.tokensPerPct)} por 1% · ≈${compact(w.tokensPerPct * Math.max(0, 100 - w.pct))} restantes`
         : '')
+
+const projectLine = (p: ProjectShare) =>
+  `${p.name.padEnd(18)} ${bar(p.share * 100, 10)} ${percent(p.share * 100)} do gasto` +
+  (p.points !== undefined ? ` · ≈${p.points.toFixed(1).replace('.', ',')} pts` : '')
+
+/** Quanto cada projeto gastou na janela (até 5). */
+const ProjectList = (ui: BasicUi, w: WindowView, indent: string) => {
+  const { Box, Text } = ui
+  const list = w.projects ?? []
+  if (list.length === 0) return undefined
+
+  return (
+    <Box key="projects" flexDirection="column">
+      <Text dimColor>{indent}Por projeto (esta máquina):</Text>
+      {list.slice(0, 5).map(p => (
+        <Text key={p.name}>
+          {indent}
+          {'  '}
+          {projectLine(p)}
+        </Text>
+      ))}
+    </Box>
+  )
+}
 
 const EMPTY =
   'Sem dados de limite ainda: eles chegam com a primeira resposta da API e só existem em planos de assinatura (Pro/Max).'
@@ -230,6 +254,7 @@ const WindowCard = (ui: RichUi, w: WindowView, now: number, px: number) => {
       </Box>
       <Text color={colorOf(w)}>{verdictText(w, now)}</Text>
       {tokens !== undefined && <Text dimColor>{tokens}</Text>}
+      {ProjectList(ui, w, '')}
     </Box>
   )
 }
@@ -394,6 +419,7 @@ export const TerminalPane = (ui: TerminalUi, { snap, totals, economy }: ViewData
                 {tokens}
               </Text>
             )}
+            {ProjectList(ui, w, '  ')}
           </Box>
         )
       })}

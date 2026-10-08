@@ -53,6 +53,18 @@ export type Advice = {
   tip?: string
 }
 
+/** A parte de um projeto no gasto de uma janela. */
+export type ProjectShare = {
+  name: string
+  /** Fração do gasto da janela, 0 a 1. */
+  share: number
+  /** Pontos do limite atribuídos ao projeto, pela fração do gasto. */
+  points?: number
+}
+
+/** Gasto em US$ (preço de API) por projeto numa janela. */
+export type ProjectBucket = { resetsAt: number; firstPct: number; byProject: Record<string, number> }
+
 export type Verdict = 'ok' | 'tight' | 'exhausts' | 'exhausted' | 'unknown'
 
 export type WindowView = {
@@ -79,6 +91,8 @@ export type WindowView = {
   windowTokens?: number
   /** Tokens por 1% do limite, medido nesta janela. */
   tokensPerPct?: number
+  /** Quanto cada projeto gastou nesta janela, nesta máquina. */
+  projects?: ProjectShare[]
 }
 
 export type Snapshot = {
@@ -91,6 +105,6 @@ export type Snapshot = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'usage-limits': { snapshot: Snapshot | null; session: Totals; economy: boolean; setup: Setup }
+    'usage-limits': { snapshot: Snapshot | null; session: Totals; economy: boolean; setup: Setup; project: string }
   }
 }
