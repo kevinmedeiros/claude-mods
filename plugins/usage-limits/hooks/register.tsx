@@ -384,8 +384,26 @@ const setEconomy = async ($: EngineInterface, on: boolean) => {
   )
 }
 
+/**
+ * O botão ↻: relê a leitura mais nova da máquina, recalcula, atualiza a lista
+ * de sessões e os créditos de API. O % da conta em si só muda quando alguma
+ * sessão recebe uma resposta da API (uma chamada avulsa não o traz).
+ */
+const reloadAll = async ($: EngineInterface) => {
+  if (apiConfig.key) await refreshApi($)
+  await refresh($, await $.session.usage(), false)
+  const age = readingAge((await read($, snapshot))?.readAt, await $.clock.now())
+  $.ui.toast(
+    age
+      ? `Atualizado. A leitura da conta é de ${age}; um número novo chega na próxima resposta do Claude em qualquer sessão desta máquina.`
+      : 'Atualizado com a leitura mais recente da conta.',
+    { timeoutMs: 6000 },
+  )
+}
+
 const actionsFor = ($: EngineInterface, withDetails: boolean): Actions => ({
   details: withDetails ? () => void $.ui.open({ id: PANE, title: 'Limites' }) : undefined,
+  reload: () => void reloadAll($),
   toggleEconomy: () => void read($, economy).then(on => setEconomy($, !on)),
   fillModel: alias => void $.prompt.fill({ text: `/model ${alias}` }),
 })

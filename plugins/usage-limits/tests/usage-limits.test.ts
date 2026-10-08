@@ -448,3 +448,39 @@ test('créditos de API: ciclo, soma do relatório do Console e projeção', () =
   expect(costReportUrl(b.start, now)).toContain('/v1/organizations/cost_report?starting_at=')
   expect(costReportUrl(b.start, now)).toContain('group_by[]=description')
 })
+
+test('botão ↻ Atualizar na faixa e no painel, nas duas superfícies', async ($, on) => {
+  engine(on)
+  on('ui.render', () => ({ type: 'Box', props: {}, children: [] }) as unknown as RenderElement)
+  const toasts: string[] = []
+  on('ui.toast', ($, e) => (toasts.push(e.text), { value: undefined }))
+  on('ui.status', () => ({ value: undefined }))
+  let usageCalls = 0
+  on('session.usage', () => {
+    usageCalls += 1
+    return { value: { startedAt: 0, context: { window: 200_000 }, rateLimits: MEASURE.rateLimits } }
+  })
+  await $.session.measure(MEASURE)
+
+  for (const surface of ['desktop', 'terminal'] as const) {
+    const band = await $.ui.mount({
+      plugin: 'usage-limits',
+      surface,
+      component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} },
+    })
+    expect(await band.find({ type: 'Button', key: 'reload' })).toBeDefined()
+    const pane = await $.ui.mount({ plugin: 'usage-limits', surface, component: 'Pane', requestId: 'usage-limits', props: PANE_PROPS })
+    expect(await pane.find({ type: 'Button', key: 'reload-top' })).toBeDefined()
+  }
+
+  const band = await $.ui.mount({
+    plugin: 'usage-limits',
+    surface: 'desktop',
+    component: 'AbovePrompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} },
+  })
+  await band.press({ key: 'reload' })
+  expect(usageCalls).toBeGreaterThan(0)
+  expect(toasts.at(-1)).toMatch(/^Atualizado/)
+})

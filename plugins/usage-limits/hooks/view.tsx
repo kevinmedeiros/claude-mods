@@ -31,6 +31,8 @@ export type ViewData = { snap: Snapshot; totals: Totals; economy: boolean; api: 
 /** O que os botões fazem; `details` só existe fora do painel. */
 export type Actions = {
   details?: () => void
+  /** ↻ Atualizar: relê a leitura mais nova e recalcula tudo. */
+  reload?: () => void
   toggleEconomy: () => void
   fillModel: (alias: string) => void
 }
@@ -249,6 +251,10 @@ const AdviceButtons = (ui: BasicUi, a: Advice | undefined, economy: boolean, act
   if (actions.details) {
     buttons.push(<Button key="details" label="Detalhes" plain onPress={actions.details} />)
   }
+  // Na faixa o ↻ fica junto dos outros botões; no painel ele fica no topo.
+  if (actions.reload) {
+    buttons.push(<Button key="reload" label="↻ Atualizar" plain onPress={actions.reload} />)
+  }
 
   return buttons.length > 0 ? (
     <Box key="buttons" flexDirection="row" columnGap={2} flexWrap="wrap">
@@ -294,7 +300,7 @@ const AdviceCard = (ui: BasicUi, a: Advice | undefined, economy: boolean, action
           {a.tip !== undefined && <Text dimColor>{a.tip}</Text>}
         </Box>
       )}
-      {AdviceButtons(ui, a, economy, actions, true)}
+      {AdviceButtons(ui, a, economy, { ...actions, reload: undefined }, true)}
       <Text dimColor>
         Estimativa pelo preço de API de cada modelo; a assinatura pode pesar os modelos de outro jeito.
       </Text>
@@ -405,7 +411,7 @@ const SessionCard = (ui: RichUi, { snap, totals }: ViewData, px: number) => {
 
 /** Painel `/limites` em superfícies que desenham SVG. */
 export const RichPane = (ui: RichUi, data: ViewData, columns: number, actions: Actions) => {
-  const { Box, Text } = ui
+  const { Box, Text, Button } = ui
   const { snap } = data
   const now = snap.updatedAt
   const px = Math.max(220, Math.min(820, columns * 7 - 24))
@@ -414,7 +420,10 @@ export const RichPane = (ui: RichUi, data: ViewData, columns: number, actions: A
     <Box flexDirection="column" rowGap={1}>
       <Box flexDirection="row" justifyContent="space-between">
         <Text bold>Limites de uso</Text>
-        <Text dimColor>{freshness(snap)}</Text>
+        <Box flexDirection="row" columnGap={2} alignItems="center">
+          <Text dimColor>{freshness(snap)}</Text>
+          {actions.reload && <Button key="reload-top" label="↻ Atualizar" onPress={actions.reload} />}
+        </Box>
       </Box>
       {snap.windows.length === 0 && <Text dimColor>{EMPTY}</Text>}
       {snap.windows.map(w => WindowCard(ui, w, now, px))}
@@ -502,7 +511,10 @@ export const TerminalPane = (ui: TerminalUi, { snap, totals, economy, api }: Vie
 
   return (
     <Box flexDirection="column">
-      <Text dimColor>{freshness(snap)}</Text>
+      <Box flexDirection="row" columnGap={2}>
+        <Text dimColor>{freshness(snap)}</Text>
+        {actions.reload && <ui.Button key="reload-top" label="↻ Atualizar" onPress={actions.reload} />}
+      </Box>
       {snap.windows.length === 0 && <Text dimColor>{EMPTY}</Text>}
       {snap.windows.map(w => {
         const tokens = tokensLine(w)
