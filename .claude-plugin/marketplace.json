@@ -1,0 +1,11 @@
+{
+  "name": "kevin-mods",
+  "owner": { "name": "Kevin Medeiros" },
+  "plugins": [
+    {
+      "name": "usage-limits",
+      "source": "./",
+      "description": "Consumo de tokens, custo, previsão dos limites de 5h e semanal e recomendação de modelo"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "usage-limits",
+  "version": "0.2.0",
+  "description": "Consumo de tokens, custo, previsão dos limites de 5h e semanal e recomendação de modelo",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Kevin Medeiros"
+  }
+}
