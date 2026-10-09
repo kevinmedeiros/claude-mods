@@ -90,7 +90,7 @@ Continue on another machine where you stopped.
 - **On the other machine**, the next session in that project shows *"↪ Handoff from MacBook (3h ago): …"* above the prompt, with **Continue from here**, **View** and **Dismiss** buttons.
 - **Long-turn alert:** a toast, plus a chime on macOS, when a turn runs longer than 3 minutes. Optionally spoken.
 
-The handoff file travels with your project, through a git push or a synced folder.
+The handoff file travels with your project, through a git push or a synced folder. If you'd rather keep it out of git, add `.claude/handoff.md` to `.gitignore` and sync the folder instead.
 
 | Option | Default |
 |---|---|

@@ -87,7 +87,7 @@ Continue em outra máquina de onde parou.
 - **Na outra máquina**, a próxima sessão no projeto mostra *"↪ Handoff de MacBook (há 3h): …"* acima do prompt, com os botões **Continuar daqui**, **Ver** e **Dispensar**.
 - **Aviso de turno longo:** notificação e, no macOS, um som quando um turno passa de 3 minutos. Pode também falar em voz alta.
 
-O arquivo de handoff viaja junto com o projeto, por git ou por pasta sincronizada.
+O arquivo de handoff viaja junto com o projeto, por git ou por pasta sincronizada. Se preferir deixá-lo fora do git, adicione `.claude/handoff.md` ao `.gitignore` e sincronize a pasta.
 
 | Opção | Padrão |
 |---|---|
