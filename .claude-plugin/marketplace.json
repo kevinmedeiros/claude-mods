@@ -18,6 +18,11 @@
       "description": "Passagem de bastão entre máquinas (/handoff) e aviso quando um turno longo termina"
     },
     {
+      "name": "tarefas",
+      "source": "./plugins/tarefas",
+      "description": "Project tasks in a TASKS.md: a pane, the next task above the prompt, and Claude creating and finishing tasks"
+    },
+    {
       "name": "unity-tools",
       "source": "./plugins/unity-tools",
       "description": "Unity: erros de compilação no contexto, testes em batch, build do servidor e guardas de arquivos"

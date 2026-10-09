@@ -1,0 +1,30 @@
+{
+  "name": "tarefas",
+  "version": "0.1.0",
+  "description": "As tarefas do projeto num TASKS.md: painel, próxima tarefa acima do prompt, e o Claude criando e concluindo tarefas",
+  "author": { "name": "Kevin Medeiros" },
+  "license": "MIT",
+  "repository": "https://github.com/kevinmedeiros/claude-mods",
+  "homepage": "https://github.com/kevinmedeiros/claude-mods#tarefas",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "tasksPath": {
+      "type": "string",
+      "title": "Arquivo de tarefas",
+      "description": "Relativo à raiz do projeto (git) ou à pasta da sessão",
+      "default": "TASKS.md"
+    },
+    "showBand": {
+      "type": "boolean",
+      "title": "Próxima tarefa acima do prompt",
+      "description": "Mostra a próxima tarefa ativa com os botões Começar e Feita",
+      "default": true
+    },
+    "claudeCanEdit": {
+      "type": "boolean",
+      "title": "O Claude cria e conclui tarefas",
+      "description": "Dá ao Claude as ferramentas para criar e concluir tarefas (sempre com aviso na tela)",
+      "default": true
+    }
+  }
+}

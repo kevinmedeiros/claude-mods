@@ -1,7 +1,7 @@
 import type { On } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { formatHandoff, headline, parseHandoff, relative } from '../hooks/handoff'
+import { formatHandoff, headline, openTasks, parseHandoff, relative } from '../hooks/handoff'
 
 const NOW = Date.parse('2026-10-08T12:00:00Z')
 
@@ -33,7 +33,13 @@ test('caminho relativo à raiz, no Mac e no Windows', () => {
 type Files = Record<string, string>
 
 /** Disco, git e hostname de mentira por baixo do plugin. */
-const machine = (on: On, files: Files, host: string, toasts: string[] = []) => {
+const machine = (
+  on: On,
+  files: Files,
+  host: string,
+  toasts: string[] = [],
+  commands: { refuse?: string[]; registered?: string[] } = {},
+) => {
   mock.clock(on, { now: NOW })
   mock.store(on)
   on('process.run', ($, e) => {
@@ -50,7 +56,11 @@ const machine = (on: On, files: Files, host: string, toasts: string[] = []) => {
     return { value: undefined }
   })
   on('session.start', ($, e) => ({ cwd: e.cwd }))
-  on('command.register', ($, e) => ({ value: { command: e.name } }))
+  on('command.register', ($, e) => {
+    if (commands.refuse?.includes(e.name)) throw new Error(`"/${e.name}" refused: it is another plugin's command`)
+    commands.registered?.push(e.name)
+    return { value: { command: e.name } }
+  })
   on('turn.complete', ($, e) => ({ text: e.answer }))
   on('ui.toast', ($, e) => (toasts.push(e.text), { value: undefined }))
   on('audio.play', () => ({ value: undefined }))
@@ -125,4 +135,23 @@ test('handoff automático vem desligado: editar não cria arquivo no projeto', a
   await $.tool.call({ tool: 'Write', file_path: '/proj/src/a.cs', content: 'x' })
   await $.turn.complete({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't', reason: 'answer' })
   expect(files['/proj/.claude/handoff.md']).toBeUndefined()
+})
+
+test('o handoff leva as tarefas abertas do TASKS.md', () => {
+  const tasks = openTasks('# Tasks\n\n## Active\n- [ ] **Portar a esquiva** - FishNet\n- [x] ~~Feita~~\n\n## Someday\n- [ ] Ideia solta\n\n## Waiting On\n- [ ] Folhas do artista\n')
+  expect(tasks).toEqual(['Portar a esquiva - FishNet', 'Folhas do artista'])
+  const text = formatHandoff({ project: 'p', machine: 'm', at: NOW, summary: null, summaryAt: null, edited: [], git: null, tasks })
+  expect(text).toContain('## Tarefas abertas (TASKS.md)\n- [ ] Portar a esquiva - FishNet\n- [ ] Folhas do artista')
+})
+
+test('se outro plugin já tem /handoff, usa /passagem e o resto do mod segue funcionando', async ($, on) => {
+  const files: Files = {}
+  const toasts: string[] = []
+  const registered: string[] = []
+  machine(on, files, 'MacBook', toasts, { refuse: ['handoff'], registered })
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  expect(registered).toEqual(['passagem'])
+  // O aviso de turno longo continua de pé.
+  await $.turn.complete({ answer: 'ok', durationMs: 4 * 60_000, isAborted: false, turnId: 't', reason: 'answer' })
+  expect(toasts).toEqual(['✓ Turno terminou em 4min'])
 })

@@ -5,6 +5,7 @@ import type { Handoff } from '../types'
 import {
   SUMMARY_SYSTEM,
   ago,
+  openTasks,
   duration,
   formatHandoff,
   headline,
@@ -69,6 +70,16 @@ const summarize = async ($: EngineInterface, note: string) => {
   return answer.isAnswered ? answer.text.trim() : undefined
 }
 
+/** As tarefas abertas do TASKS.md do projeto, se ele existir. */
+const tasksOf = async ($: EngineInterface) => {
+  const file = joinPath(where.root, 'TASKS.md')
+  try {
+    return (await $.fs.exists(file)) ? openTasks(await $.fs.read(file)) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Grava o handoff na raiz do projeto e devolve o caminho. */
 const writeHandoff = async ($: EngineInterface, path: string) => {
   const at = await $.clock.now()
@@ -80,12 +91,33 @@ const writeHandoff = async ($: EngineInterface, path: string) => {
     summaryAt: where.summaryAt,
     edited: await read($, edited),
     git: await gitInfo($, where.root),
+    tasks: await tasksOf($),
   })
   const file = joinPath(where.root, path)
   await $.fs.write(file, text)
   where.written = (await read($, edited)).length
 
   return file
+}
+
+/**
+ * Registra o comando com o primeiro nome livre: outro plugin pode já ter um
+ * `/handoff`. Uma recusa não derruba o resto do mod.
+ */
+const registerCommand = async (
+  $: EngineInterface,
+  names: string[],
+  spec: { description: string; argumentHint?: string },
+): Promise<string | undefined> => {
+  for (const name of names) {
+    try {
+      await $.command.register({ name, ...spec })
+      return name
+    } catch {
+      // Nome ocupado: tenta o próximo.
+    }
+  }
+  return undefined
 }
 
 /** Mostra o handoff de outra máquina, se houver um novo. */
@@ -104,6 +136,24 @@ const dismiss = async ($: EngineInterface, handoff: Handoff) => {
   await update($, incoming, () => null)
 }
 
+/** O /handoff (ou /passagem): resume com Haiku e grava o arquivo. */
+const runHandoff = async ($: EngineInterface, args: string, handoffPath: string) => {
+  if (!where.root) return { text: 'Sem pasta de projeto nesta sessão.' }
+  const text = await summarize($, args.trim())
+  if (text) {
+    await update($, summary, () => text)
+    where.summaryAt = await $.clock.now()
+  }
+  const file = await writeHandoff($, handoffPath)
+
+  return {
+    text:
+      `Handoff salvo em ${file}${text ? '' : ' (sem resumo: a conversa não pôde ser resumida)'}.\n` +
+      'Leve o arquivo para a outra máquina junto com o projeto (commit e push, ou pasta sincronizada). ' +
+      'Lá, a próxima sessão no projeto mostra o handoff acima do prompt.',
+  }
+}
+
 export const register: Register = (on, options) => {
   const handoffPath = String(options.handoffPath ?? '.claude/handoff.md')
   const longTurnMs = Number(options.longTurnMinutes ?? 3) * 60_000
@@ -114,8 +164,7 @@ export const register: Register = (on, options) => {
     where.root = top || started.cwd
     where.project = where.root.split(/[\\/]/).filter(Boolean).pop() ?? where.root
     where.machine = ((await run($, ['hostname'], started.cwd)) ?? 'esta máquina').replace(/\.local$/, '')
-    await $.command.register({
-      name: 'handoff',
+    await registerCommand($, ['handoff', 'passagem'], {
       description: 'Resume onde você parou e grava em .claude/handoff.md para continuar em outra máquina',
       argumentHint: '[observação opcional]',
     })
@@ -159,22 +208,9 @@ export const register: Register = (on, options) => {
     return result
   })
 
-  on('command.run', { command: 'handoff' }, async ($, e) => {
-    if (!where.root) return { text: 'Sem pasta de projeto nesta sessão.' }
-    const text = await summarize($, e.args.trim())
-    if (text) {
-      await update($, summary, () => text)
-      where.summaryAt = await $.clock.now()
-    }
-    const file = await writeHandoff($, handoffPath)
 
-    return {
-      text:
-        `Handoff salvo em ${file}${text ? '' : ' (sem resumo: a conversa não pôde ser resumida)'}.\n` +
-        'Leve o arquivo para a outra máquina junto com o projeto (commit e push, ou pasta sincronizada). ' +
-        'Lá, a próxima sessão no projeto mostra o handoff acima do prompt.',
-    }
-  })
+  on('command.run', { command: 'handoff' }, ($, e) => runHandoff($, e.args, handoffPath))
+  on('command.run', { command: 'passagem' }, ($, e) => runHandoff($, e.args, handoffPath))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Markdown, Text } = $.ui.resolve(e)

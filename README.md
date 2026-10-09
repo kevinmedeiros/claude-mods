@@ -6,8 +6,8 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Claude Code plugins](https://img.shields.io/badge/Claude%20Code-plugins-d97757)](https://code.claude.com/docs)
-![Mods](https://img.shields.io/badge/mods-4-informational)
-![Tests](https://img.shields.io/badge/tests-39%20passing-brightgreen)
+![Mods](https://img.shields.io/badge/mods-5-informational)
+![Tests](https://img.shields.io/badge/tests-50%20passing-brightgreen)
 
 [English](README.md) · [Português](README.pt-BR.md)
 
@@ -17,12 +17,13 @@
 
 ---
 
-Claude Code mods are plugins of **function hooks**: TypeScript that runs inside Claude Code and can draw panes and bands, add slash commands, watch tool calls, and feed context back to the model. This repository is a marketplace of four of them, built for daily use on a Max plan and on game projects.
+Claude Code mods are plugins of **function hooks**: TypeScript that runs inside Claude Code and can draw panes and bands, add slash commands, watch tool calls, and feed context back to the model. This repository is a marketplace of five of them, built for daily use on a Max plan and on game projects.
 
 | Mod | What it gives you |
 |---|---|
 | [**usage-limits**](#usage-limits) | Your 5-hour and weekly limits with **how long they will last** at your current pace, tokens and cost across every open session, a per-project breakdown, API-credit tracking, and a model recommendation that keeps you from running dry before the reset. |
 | [**fluxo**](#fluxo) | `/handoff` writes where you stopped so the next session on another machine picks it up, plus a sound and notification when a long turn finishes. |
+| [**tarefas**](#tarefas) | The project's tasks in a plain `TASKS.md`: a pane, the next task above the prompt with *Start* and *Done* buttons, and Claude creating and finishing tasks as it works. |
 | [**unity-tools**](#unity-tools) | Compiler errors handed to Claude seconds after it edits a `.cs`, EditMode/PlayMode tests it can run on its own, a dedicated-server build pane, and guards that keep it out of `Library/`, scenes and `.meta` files. |
 | [**blender-preview**](#blender-preview) | A live thumbnail of the Blender scene with triangle, bone and texture budgets, and a check of every `.glb` Claude exports. |
 
@@ -36,6 +37,7 @@ You need a recent Claude Code (tested on 2.1.286 – 2.1.295). In a terminal, st
 ```
 /plugin install usage-limits --marketplace kevinmedeiros/claude-mods
 /plugin install fluxo --marketplace kevinmedeiros/claude-mods
+/plugin install tarefas --marketplace kevinmedeiros/claude-mods
 /plugin install unity-tools --marketplace kevinmedeiros/claude-mods
 /plugin install blender-preview --marketplace kevinmedeiros/claude-mods
 ```
@@ -85,7 +87,7 @@ The percentages come from Anthropic's own rate-limit headers, so they cover **th
 
 Continue on another machine where you stopped.
 
-- **`/handoff [note]`** has Claude Haiku 5.5 summarize the session (where you stopped, what was done, next steps, gotchas) and writes it to `.claude/handoff.md` with the files you changed and the git state.
+- **`/handoff [note]`** (or `/passagem`, if another plugin already has `/handoff`) has Claude Haiku 5.5 summarize the session (where you stopped, what was done, next steps, gotchas) and writes it to `.claude/handoff.md` with the files you changed and the git state.
 - **Automatic handoff** (off by default). When `autoHandoff` is on, every turn that edits files refreshes the file list, so there's a record even if the session dies.
 - **On the other machine**, the next session in that project shows *"↪ Handoff from MacBook (3h ago): …"* above the prompt, with **Continue from here**, **View** and **Dismiss** buttons.
 - **Long-turn alert:** a toast, plus a chime on macOS, when a turn runs longer than 3 minutes. Optionally spoken.
@@ -98,6 +100,23 @@ The handoff file travels with your project, through a git push or a synced folde
 | `sound` / `speak` | `true` / `false` |
 | `autoHandoff` | `false` (turn on to refresh the file after every turn that edits) |
 | `handoffPath` | `.claude/handoff.md` |
+
+## tarefas
+
+The project's to-do list, kept in a `TASKS.md` at the project root (the same format as Claude's task-management skill, so you, Claude and your editor can all edit it).
+
+- **Above the prompt:** *"▶ Next: port the dodge to FishNet · 7 open"* with **Start** (writes the prompt for you), **✓ Done** and **Tasks**.
+- **`/tarefas`** opens the pane: Active, Waiting On, Someday and recently done, a field to add a task, **Start**, **✓** and **↑** (move from Someday to Active).
+- **`/tarefa <title> [- context]`** adds one from the prompt.
+- **Claude keeps it current.** It gets `task_add`, `task_done` and `task_list` tools, so it records work it leaves for later and checks tasks off when it finishes them, with a toast every time. Turn this off with `claudeCanEdit`.
+- **`/tarefas importar`** pulls pending items from your notes (sections such as *Pendente*, *Próximos passos* or *Next steps*) and open checkboxes in `BACKLOG.md` / `ROADMAP.md` into *Someday*, without duplicates.
+- **With fluxo**, `/handoff` carries the open tasks to the other machine.
+
+| Option | Default |
+|---|---|
+| `tasksPath` | `TASKS.md` |
+| `showBand` | `true` |
+| `claudeCanEdit` | `true` |
 
 ## unity-tools
 
@@ -150,7 +169,7 @@ Works with Blender connected to Claude Code through a Blender MCP server.
 
 Everything stays on your machine.
 
-- **Local files.** The mods write to `~/.claude/usage-limits/`, to each plugin's own store, and to `.claude/handoff.md` in your project.
+- **Local files.** The mods write to `~/.claude/usage-limits/`, to each plugin's own store, to `.claude/handoff.md` and `TASKS.md` in your project.
 - **Network requests:**
   - `usage-limits` calls the Console cost API, and only when you set an Admin key.
   - `fluxo` calls Claude Haiku 5.5 when you run `/handoff`.

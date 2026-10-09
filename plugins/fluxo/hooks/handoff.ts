@@ -10,6 +10,25 @@ export type HandoffInput = {
   summaryAt: number | null
   edited: string[]
   git: GitInfo
+  /** As tarefas abertas do TASKS.md (mod tarefas), se houver. */
+  tasks?: string[]
+}
+
+/** As tarefas abertas das seções Active e Waiting On de um TASKS.md. */
+export const openTasks = (text: string): string[] => {
+  const out: string[] = []
+  let take = false
+  for (const line of text.split('\n')) {
+    const h = /^##\s+(.+?)\s*$/.exec(line)
+    if (h) {
+      take = /^(active|ativas|em andamento|waiting on|aguardando)$/i.test(h[1] ?? '')
+      continue
+    }
+    const m = /^[-*]\s+\[ \]\s+(.*)$/.exec(line)
+    if (take && m) out.push((m[1] ?? '').replace(/\*\*/g, '').trim())
+  }
+
+  return out
 }
 
 const HEADER = /<!--\s*fluxo-handoff machine="([^"]*)" at="([^"]*)"\s*-->/
@@ -36,6 +55,12 @@ export const formatHandoff = (h: HandoffInput): string => {
     }
   } else {
     lines.push('_Sem resumo: rode `/handoff` para gerar um._', '')
+  }
+  if (h.tasks && h.tasks.length > 0) {
+    lines.push('## Tarefas abertas (TASKS.md)')
+    lines.push(...h.tasks.slice(0, 20).map(t => `- [ ] ${t}`))
+    if (h.tasks.length > 20) lines.push(`- … e mais ${h.tasks.length - 20}`)
+    lines.push('')
   }
   lines.push('## Arquivos alterados nesta sessão')
   lines.push(...(h.edited.length > 0 ? h.edited.slice(0, 60).map(f => `- ${f}`) : ['- nenhum']))
