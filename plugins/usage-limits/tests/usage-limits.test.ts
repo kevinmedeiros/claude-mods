@@ -262,11 +262,11 @@ test('modo economia põe subagentes em Haiku e mantém o principal', async ($, o
 })
 
 test('orçamento por projeto: nome e divisão do gasto', () => {
-  expect(projectName('/Users/kevinm/MMORPG')).toBe('MMORPG')
-  expect(projectName('/Users/kevinm/Duel/.claude/worktrees/sad-kirch')).toBe('Duel')
+  expect(projectName('/home/devevinm/my-game')).toBe('my-game')
+  expect(projectName('/home/dev/web-app/.claude/worktrees/sad-kirch')).toBe('web-app')
   expect(projectName('C:\\dev\\Jogo\\workdir')).toBe('Jogo')
-  const shares = projectShares({ resetsAt: 0, firstPct: 10, byProject: { MMORPG: 6, Enco: 3, MODS: 1 } }, 40)
-  expect(shares.map(s => s.name)).toEqual(['MMORPG', 'Enco', 'MODS'])
+  const shares = projectShares({ resetsAt: 0, firstPct: 10, byProject: { 'my-game': 6, work: 3, mods: 1 } }, 40)
+  expect(shares.map(s => s.name)).toEqual(['my-game', 'work', 'mods'])
   expect(shares[0]?.share).toBe(0.6)
   expect(shares[0]?.points).toBe(18)
 })
@@ -380,7 +380,7 @@ test('sessão parada usa a leitura mais nova que outra sessão gravou e mostra a
   const statuses: (string | undefined)[] = []
   on('ui.status', ($, e) => (statuses.push(e.text), { value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
-  on('env.get', () => ({ value: '/Users/k' }))
+  on('env.get', () => ({ value: '/home/dev' }))
   on('process.run', () => ({ value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
@@ -391,7 +391,7 @@ test('sessão parada usa a leitura mais nova que outra sessão gravou e mostra a
       { kind: 'seven_day', percentUsed: 12, resetsAt: iso(NOW + 5 * 24 * HOUR) },
     ],
   }
-  on('fs.exists', ($, e) => ({ value: e.path === '/Users/k/.claude/usage-limits/latest.json' }))
+  on('fs.exists', ($, e) => ({ value: e.path === '/home/dev/.claude/usage-limits/latest.json' }))
   on('fs.read', () => ({ value: JSON.stringify(shared) }))
   on('fs.write', () => ({ value: undefined }))
   on('session.id', () => ({ value: 'sessao-a' }))
@@ -421,10 +421,10 @@ const rec = (id: string, project: string, costUsd: number, minutesAgo: number, e
 
 test('lista as sessões abertas, o total delas e o total de hoje', () => {
   let book = upsertSession(undefined, { ...rec('velha', 'x', 9, 0), updatedAt: NOW - 3 * 24 * HOUR }, NOW - 3 * 24 * HOUR)
-  book = upsertSession(book, rec('a', 'MMORPG', 4, 0), NOW)
-  book = upsertSession(book, rec('b', 'licitacao', 6, 1), NOW)
+  book = upsertSession(book, rec('a', 'my-game', 4, 0), NOW)
+  book = upsertSession(book, rec('b', 'api-service', 6, 1), NOW)
   book = upsertSession(book, rec('c', 'MODS', 2, 30), NOW) // sem sinal há 30 min: fechada
-  book = upsertSession(book, rec('d', 'Duel', 1, 5, true), NOW) // encerrada
+  book = upsertSession(book, rec('d', 'web-app', 1, 5, true), NOW) // encerrada
   expect(Object.keys(book).sort()).toEqual(['a', 'b', 'c', 'd'])
 
   const view = sessionsView(book, NOW, 'a')

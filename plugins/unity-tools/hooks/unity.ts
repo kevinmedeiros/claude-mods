@@ -234,7 +234,7 @@ export const guard = (input: GuardInput, cfg: GuardConfig): string | undefined =
   if (!cfg.allowSceneEdits && /\.(unity|prefab)$/i.test(r)) {
     return (
       `unity-tools: não reescreva cenas ou prefabs à mão (${r}). Crie ou altere por um script de editor ` +
-      '(como o CreatePlayerPrefab) ou no próprio Unity.'
+      'ou no próprio Unity.'
     )
   }
   if (/\.meta$/i.test(r) && input.tool === 'Write' && input.exists === false) {

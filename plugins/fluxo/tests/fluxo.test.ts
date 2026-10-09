@@ -7,25 +7,25 @@ const NOW = Date.parse('2026-10-08T12:00:00Z')
 
 test('handoff: escreve e lê de volta', () => {
   const text = formatHandoff({
-    project: 'MMORPG',
+    project: 'my-game',
     machine: 'MacBook',
     at: NOW,
     summary: '## Onde parei\nPortando a esquiva para o FishNet.\n\n## Próximos passos\n- testar PlayMode',
     summaryAt: NOW,
-    edited: ['client/AwakenFront/Assets/Scripts/Core/Dodge.cs'],
+    edited: ['client/MyGame/Assets/Scripts/Core/Dodge.cs'],
     git: null,
   })
   const h = parseHandoff(text)
   expect(h?.machine).toBe('MacBook')
   expect(h?.at).toBe(NOW)
   expect(h && headline(h)).toBe('Portando a esquiva para o FishNet.')
-  expect(text).toContain('- client/AwakenFront/Assets/Scripts/Core/Dodge.cs')
+  expect(text).toContain('- client/MyGame/Assets/Scripts/Core/Dodge.cs')
   expect(text).toContain('Pasta sem git')
   expect(parseHandoff('# só um markdown')).toBeUndefined()
 })
 
 test('caminho relativo à raiz, no Mac e no Windows', () => {
-  expect(relative('/Users/k/MMORPG', '/Users/k/MMORPG/client/x.cs')).toBe('client/x.cs')
+  expect(relative('/home/dev/my-game', '/home/dev/my-game/client/x.cs')).toBe('client/x.cs')
   expect(relative('C:\\dev\\Jogo', 'c:\\dev\\Jogo\\Assets\\a.cs')).toBe('Assets/a.cs')
   expect(relative('/a', '/b/c.cs')).toBe('/b/c.cs')
 })

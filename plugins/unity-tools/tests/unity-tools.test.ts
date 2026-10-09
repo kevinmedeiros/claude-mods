@@ -3,24 +3,24 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { guard, parseCompileErrors, parseTestResults, projectReferences, testSummary } from '../hooks/unity'
 
-const ROOT = '/Users/k/MMORPG/client/AwakenFront'
+const ROOT = '/home/dev/my-game/client/MyGame'
 const CFG = { root: ROOT, coreDir: 'Assets/Scripts/Core', allowSceneEdits: false }
 
 // Trecho no formato do XML real do Unity 6 (NUnit 3), com uma falha.
 const XML = `<?xml version="1.0" encoding="utf-8"?>
 <test-run id="2" testcasecount="3" result="Failed" total="3" passed="2" failed="1" inconclusive="0" skipped="0" duration="0.0229666">
-  <test-suite type="TestSuite" name="AwakenFront" fullname="AwakenFront" total="3" passed="2" failed="1">
-    <test-case id="1006" name="Awakening_RequiresLevel6AndPath" fullname="AwakenFront.Core.Tests.DodgeAndProgressionTests.Awakening_RequiresLevel6AndPath" methodname="Awakening_RequiresLevel6AndPath" result="Passed" duration="0.005042"><properties /></test-case>
-    <test-case id="1007" name="Dodge_CostsStamina" fullname="AwakenFront.Core.Tests.DodgeAndProgressionTests.Dodge_CostsStamina" methodname="Dodge_CostsStamina" result="Failed" duration="0.001596">
+  <test-suite type="TestSuite" name="MyGame" fullname="MyGame" total="3" passed="2" failed="1">
+    <test-case id="1006" name="Unlock_RequiresLevel6" fullname="MyGame.Core.Tests.DodgeAndProgressionTests.Unlock_RequiresLevel6" methodname="Unlock_RequiresLevel6" result="Passed" duration="0.005042"><properties /></test-case>
+    <test-case id="1007" name="Dodge_CostsStamina" fullname="MyGame.Core.Tests.DodgeAndProgressionTests.Dodge_CostsStamina" methodname="Dodge_CostsStamina" result="Failed" duration="0.001596">
       <failure>
         <message><![CDATA[  Expected: 35
   But was:  30
 ]]></message>
-        <stack-trace><![CDATA[at AwakenFront.Core.Tests.DodgeAndProgressionTests.Dodge_CostsStamina () [0x00011] in Assets/Tests/EditMode/DodgeTests.cs:42
+        <stack-trace><![CDATA[at MyGame.Core.Tests.DodgeAndProgressionTests.Dodge_CostsStamina () [0x00011] in Assets/Tests/EditMode/DodgeTests.cs:42
 ]]></stack-trace>
       </failure>
     </test-case>
-    <test-case id="1008" name="Sprint_Toggles" fullname="AwakenFront.Core.Tests.SprintTests.Sprint_Toggles" result="Passed"><properties /></test-case>
+    <test-case id="1008" name="Sprint_Toggles" fullname="MyGame.Core.Tests.SprintTests.Sprint_Toggles" result="Passed"><properties /></test-case>
   </test-suite>
 </test-run>`
 
@@ -28,7 +28,7 @@ test('lê o XML de testes do Unity', () => {
   const r = parseTestResults(XML, 'EditMode')
   expect(r?.total).toBe(3)
   expect(r?.failed).toBe(1)
-  expect(r?.failures[0]?.name).toBe('AwakenFront.Core.Tests.DodgeAndProgressionTests.Dodge_CostsStamina')
+  expect(r?.failures[0]?.name).toBe('MyGame.Core.Tests.DodgeAndProgressionTests.Dodge_CostsStamina')
   expect(r?.failures[0]?.message).toBe('Expected: 35\n  But was:  30')
   expect(r?.failures[0]?.stack).toContain('DodgeTests.cs:42')
   expect(r && testSummary(r)).toBe('EditMode 2/3 · 1 falha')
@@ -37,9 +37,9 @@ test('lê o XML de testes do Unity', () => {
 
 test('lê os erros do dotnet build (formato real, em português)', () => {
   const out = [
-    `${ROOT}/Assets/Scripts/Core/Dodge.cs(12,9): error CS0103: O nome "Foo" não existe no contexto atual [${ROOT}/AwakenFront.Core.csproj]`,
-    `${ROOT}/Assets/Scripts/Core/Dodge.cs(12,9): error CS0103: O nome "Foo" não existe no contexto atual [${ROOT}/AwakenFront.Core.csproj]`,
-    `CSC : error CS2001: Não foi possível encontrar o arquivo de origem "${ROOT}/Assets/Old.cs". [${ROOT}/AwakenFront.Core.csproj]`,
+    `${ROOT}/Assets/Scripts/Core/Dodge.cs(12,9): error CS0103: O nome "Foo" não existe no contexto atual [${ROOT}/MyGame.Core.csproj]`,
+    `${ROOT}/Assets/Scripts/Core/Dodge.cs(12,9): error CS0103: O nome "Foo" não existe no contexto atual [${ROOT}/MyGame.Core.csproj]`,
+    `CSC : error CS2001: Não foi possível encontrar o arquivo de origem "${ROOT}/Assets/Old.cs". [${ROOT}/MyGame.Core.csproj]`,
     `${ROOT}/Assets/Scripts/Core/Dodge.cs(3,1): warning CS0168: variável declarada mas nunca usada`,
   ].join('\n')
   const errors = parseCompileErrors(out, ROOT)
@@ -49,8 +49,8 @@ test('lê os erros do dotnet build (formato real, em português)', () => {
 })
 
 test('lê as referências entre assemblies', () => {
-  const csproj = '<ProjectReference Include="AwakenFront.Core.csproj">\n<ProjectReference Include="..\\x\\FishNet.Runtime.csproj" />'
-  expect(projectReferences(csproj)).toEqual(['AwakenFront.Core', 'FishNet.Runtime'])
+  const csproj = '<ProjectReference Include="MyGame.Core.csproj">\n<ProjectReference Include="..\\x\\FishNet.Runtime.csproj" />'
+  expect(projectReferences(csproj)).toEqual(['MyGame.Core', 'FishNet.Runtime'])
 })
 
 test('guardas: pastas geradas, cenas, .meta e núcleo sem engine', () => {
@@ -62,7 +62,7 @@ test('guardas: pastas geradas, cenas, .meta e núcleo sem engine', () => {
   expect(guard({ tool: 'Write', path: `${ROOT}/Assets/Scripts/Core/X.cs`, newText: 'using UnityEngine;\nclass X {}' }, CFG)).toMatch(/núcleo de regras/)
   expect(guard({ tool: 'Edit', path: `${ROOT}/Assets/Scripts/Core/X.cs`, newText: 'var p = UnityEngine.Vector3.zero;' }, CFG)).toMatch(/núcleo/)
   expect(guard({ tool: 'Write', path: `${ROOT}/Assets/Scripts/Game/X.cs`, newText: 'using UnityEngine;' }, CFG)).toBeUndefined()
-  expect(guard({ tool: 'Edit', path: `${ROOT}/Assets/Scripts/Core/AwakenFront.Core.asmdef`, newText: '"noEngineReferences": false' }, CFG)).toMatch(/noEngineReferences/)
+  expect(guard({ tool: 'Edit', path: `${ROOT}/Assets/Scripts/Core/MyGame.Core.asmdef`, newText: '"noEngineReferences": false' }, CFG)).toMatch(/noEngineReferences/)
   expect(guard({ tool: 'Bash', command: 'rm Assets/Old.cs.meta' }, CFG)).toMatch(/\.meta/)
   expect(guard({ tool: 'Bash', command: 'git rm -r Assets/Old Assets/Old.meta' }, CFG)).toMatch(/\.meta/)
   expect(guard({ tool: 'Bash', command: 'ls Assets/*.meta' }, CFG)).toBeUndefined()
@@ -73,8 +73,8 @@ test('guardas: pastas geradas, cenas, .meta e núcleo sem engine', () => {
 const unityProject = (on: On, buildOutput: string) => {
   const files: Record<string, string> = {
     [`${ROOT}/ProjectSettings/ProjectVersion.txt`]: 'm_EditorVersion: 6000.6.3f1\n',
-    [`${ROOT}/Assets/Scripts/Core/AwakenFront.Core.asmdef`]: '{ "name": "AwakenFront.Core" }',
-    [`${ROOT}/AwakenFront.Core.csproj`]: '<Project><Compile Include="Assets/Scripts/Core/Dodge.cs" /></Project>',
+    [`${ROOT}/Assets/Scripts/Core/MyGame.Core.asmdef`]: '{ "name": "MyGame.Core" }',
+    [`${ROOT}/MyGame.Core.csproj`]: '<Project><Compile Include="Assets/Scripts/Core/Dodge.cs" /></Project>',
     '/Applications/Unity/Hub/Editor/6000.6.3f1/Unity.app/Contents/MacOS/Unity': '',
   }
   const runs: string[][] = []
@@ -114,7 +114,7 @@ const unityProject = (on: On, buildOutput: string) => {
 
 test('Write no núcleo com UnityEngine é recusado', async ($, on) => {
   unityProject(on, '')
-  await $.session.start({ cwd: '/Users/k/MMORPG', surface: 'terminal', isInteractive: true })
+  await $.session.start({ cwd: '/home/dev/my-game', surface: 'terminal', isInteractive: true })
   const ran = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/Assets/Scripts/Core/X.cs`, content: 'using UnityEngine;' })
   expect(ran.deny ?? (ran.isError ? ran.text : undefined)).toContain('núcleo de regras')
 })
@@ -122,15 +122,15 @@ test('Write no núcleo com UnityEngine é recusado', async ($, on) => {
 test('editar um .cs entrega os erros de compilação ao Claude', async ($, on) => {
   const { runs, files } = unityProject(
     on,
-    `${ROOT}/Assets/Scripts/Core/New.cs(4,5): error CS0246: O nome do tipo "Foo" não pode ser encontrado [${ROOT}/AwakenFront.Core.csproj]`,
+    `${ROOT}/Assets/Scripts/Core/New.cs(4,5): error CS0246: O nome do tipo "Foo" não pode ser encontrado [${ROOT}/MyGame.Core.csproj]`,
   )
-  await $.session.start({ cwd: '/Users/k/MMORPG', surface: 'terminal', isInteractive: true })
+  await $.session.start({ cwd: '/home/dev/my-game', surface: 'terminal', isInteractive: true })
   const ran = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/Assets/Scripts/Core/New.cs`, content: 'class New { Foo f; }' })
 
-  expect(ran.context?.[0]).toContain('Compilação Unity (AwakenFront.Core, via dotnet build): 1 erro.')
+  expect(ran.context?.[0]).toContain('Compilação Unity (MyGame.Core, via dotnet build): 1 erro.')
   expect(ran.context?.[0]).toContain('Assets/Scripts/Core/New.cs(4,5): CS0246')
   const build = runs.find(r => r[1] === 'build')
-  expect(build?.[2]).toBe('AwakenFront.Core.csproj')
+  expect(build?.[2]).toBe('MyGame.Core.csproj')
   // O arquivo novo entra pelo .targets, fora do projeto.
-  expect(files[`${ROOT}/Temp/claude-check/extra-AwakenFront.Core.targets`]).toContain('Core/New.cs')
+  expect(files[`${ROOT}/Temp/claude-check/extra-MyGame.Core.targets`]).toContain('Core/New.cs')
 })

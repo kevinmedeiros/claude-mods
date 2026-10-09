@@ -2,7 +2,9 @@
   "name": "blender-preview",
   "version": "0.1.0",
   "description": "Prévia da cena do Blender no Claude Code e checagem de GLB contra os orçamentos do jogo",
-  "author": { "name": "Kevin Medeiros" },
+  "author": {
+    "name": "Kevin Medeiros"
+  },
   "types": "./types/index.d.ts",
   "userConfig": {
     "server": {
@@ -35,5 +37,8 @@
       "description": "Em pixels",
       "default": 2048
     }
-  }
+  },
+  "license": "MIT",
+  "repository": "https://github.com/kevinmedeiros/claude-mods",
+  "homepage": "https://github.com/kevinmedeiros/claude-mods#blender-preview"
 }

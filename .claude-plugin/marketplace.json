@@ -1,7 +1,11 @@
 {
   "name": "kevin-mods",
-  "owner": { "name": "Kevin Medeiros" },
-  "metadata": { "description": "Mods do Claude Code do Kevin: limites de uso, fluxo entre máquinas, Unity e Blender" },
+  "owner": {
+    "name": "Kevin Medeiros"
+  },
+  "metadata": {
+    "description": "Live mods for Claude Code: plan limits that tell you how long they will last, hand-offs between machines, Unity and Blender helpers"
+  },
   "plugins": [
     {
       "name": "usage-limits",

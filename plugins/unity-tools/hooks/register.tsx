@@ -347,7 +347,7 @@ const refreshStatus = async ($: EngineInterface) => {
   const failing = Object.entries(await read($, compile)).filter(([, c]) => c.errors.length > 0)
   if (failing.length > 0) {
     const n = failing.reduce((sum, [, c]) => sum + c.errors.length, 0)
-    parts.push(`✗ ${n} erro${n === 1 ? '' : 's'} de compilação (${failing.map(([a]) => a.replace(/^AwakenFront\./, '')).join(', ')})`)
+    parts.push(`✗ ${n} erro${n === 1 ? '' : 's'} de compilação (${failing.map(([a]) => a.split('.').pop()).join(', ')})`)
   } else if (Object.keys(await read($, compile)).length > 0) {
     parts.push('✓ compila')
   }
@@ -381,7 +381,7 @@ export const register: Register = (on, raw) => {
     coreDir: String(raw.coreDir ?? 'Assets/Scripts/Core'),
     compileCheck: raw.compileCheck !== false,
     allowSceneEdits: raw.allowSceneEdits === true,
-    serverBuildPath: String(raw.serverBuildPath ?? 'Builds/Server/AwakenFrontServer.x86_64'),
+    serverBuildPath: String(raw.serverBuildPath ?? 'Builds/Server/Server.x86_64'),
     buildMethod: String(raw.buildMethod ?? ''),
   }
   live.options = options

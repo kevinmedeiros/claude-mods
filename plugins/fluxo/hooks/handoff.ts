@@ -84,7 +84,7 @@ export const duration = (ms: number): string => {
   return m < 60 ? `${m}min${s % 60 ? ` ${s % 60}s` : ''}` : `${Math.floor(m / 60)}h${pad(m % 60)}`
 }
 
-/** `/Users/k/MMORPG/client/x.cs` com raiz `/Users/k/MMORPG` → `client/x.cs`. */
+/** `/home/dev/my-game/client/x.cs` com raiz `/home/dev/my-game` → `client/x.cs`. */
 export const relative = (root: string, file: string): string => {
   const norm = (p: string) => p.replaceAll('\\', '/').replace(/\/+$/, '')
   const r = norm(root)

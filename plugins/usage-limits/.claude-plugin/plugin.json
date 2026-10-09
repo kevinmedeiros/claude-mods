@@ -26,5 +26,8 @@
       "description": "Dia do mês do ciclo de cobrança do plano",
       "default": 1
     }
-  }
+  },
+  "license": "MIT",
+  "repository": "https://github.com/kevinmedeiros/claude-mods",
+  "homepage": "https://github.com/kevinmedeiros/claude-mods#usage-limits"
 }

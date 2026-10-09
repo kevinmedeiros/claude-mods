@@ -1,8 +1,10 @@
 {
   "name": "unity-tools",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Unity no Claude Code: erros de compilação no contexto, painel de testes, build do servidor e guardas de arquivos",
-  "author": { "name": "Kevin Medeiros" },
+  "author": {
+    "name": "Kevin Medeiros"
+  },
   "types": "./types/index.d.ts",
   "userConfig": {
     "projectPath": {
@@ -39,13 +41,16 @@
       "type": "string",
       "title": "Saída do build do servidor",
       "description": "Relativa ao projeto",
-      "default": "Builds/Server/AwakenFrontServer.x86_64"
+      "default": "Builds/Server/Server.x86_64"
     },
     "buildMethod": {
       "type": "string",
       "title": "Método de build (opcional)",
-      "description": "Ex.: AwakenFront.Editor.BuildServer.Build. Vazio: usa -buildLinux64Player com as cenas do Build Settings",
+      "description": "Ex.: MyGame.Editor.BuildServer.Build. Vazio: usa -buildLinux64Player com as cenas do Build Settings",
       "default": ""
     }
-  }
+  },
+  "license": "MIT",
+  "repository": "https://github.com/kevinmedeiros/claude-mods",
+  "homepage": "https://github.com/kevinmedeiros/claude-mods#unity-tools"
 }
