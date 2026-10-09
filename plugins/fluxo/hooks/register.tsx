@@ -145,7 +145,7 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     if (e.agentId) return result
 
-    if (options.autoHandoff !== false && where.root) {
+    if (options.autoHandoff === true && where.root) {
       const count = (await read($, edited)).length
       if (count > where.written) await writeHandoff($, handoffPath)
     }

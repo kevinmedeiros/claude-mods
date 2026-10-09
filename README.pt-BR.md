@@ -83,7 +83,7 @@ Os percentuais vêm dos próprios cabeçalhos de limite da Anthropic, então val
 Continue em outra máquina de onde parou.
 
 - **`/handoff [observação]`** faz o Claude Haiku 5.5 resumir a sessão (onde parou, o que foi feito, próximos passos, cuidados) e grava em `.claude/handoff.md`, com os arquivos alterados e o estado do git.
-- **Handoff automático.** Todo turno que edita arquivos atualiza a lista, então fica registro mesmo se a sessão cair.
+- **Handoff automático** (desligado por padrão). Com `autoHandoff` ligado, todo turno que edita arquivos atualiza a lista, então fica registro mesmo se a sessão cair.
 - **Na outra máquina**, a próxima sessão no projeto mostra *"↪ Handoff de MacBook (há 3h): …"* acima do prompt, com os botões **Continuar daqui**, **Ver** e **Dispensar**.
 - **Aviso de turno longo:** notificação e, no macOS, um som quando um turno passa de 3 minutos. Pode também falar em voz alta.
 
@@ -93,7 +93,7 @@ O arquivo de handoff viaja junto com o projeto, por git ou por pasta sincronizad
 |---|---|
 | `longTurnMinutes` | `3` |
 | `sound` / `speak` | `true` / `false` |
-| `autoHandoff` | `true` |
+| `autoHandoff` | `false` (ligue para atualizar o arquivo a cada turno que edita) |
 | `handoffPath` | `.claude/handoff.md` |
 
 ## unity-tools

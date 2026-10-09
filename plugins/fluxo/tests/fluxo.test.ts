@@ -99,7 +99,7 @@ test('não mostra o handoff escrito por esta mesma máquina', async ($, on) => {
   expect(await ui.find({ text: /Handoff de/ })).toBeUndefined()
 })
 
-test('edição grava o handoff automático; turno longo avisa', async ($, on) => {
+test('com o handoff automático ligado, edição grava o handoff; turno longo avisa', { options: { autoHandoff: true } }, async ($, on) => {
   const files: Files = {}
   const toasts: string[] = []
   machine(on, files, 'MacBook', toasts)
@@ -115,4 +115,14 @@ test('edição grava o handoff automático; turno longo avisa', async ($, on) =>
   expect(written).toContain('- src/a.cs')
   expect(parseHandoff(written ?? '')?.machine).toBe('MacBook')
   expect(toasts).toEqual(['✓ Turno terminou em 5min'])
+})
+
+test('handoff automático vem desligado: editar não cria arquivo no projeto', async ($, on) => {
+  const files: Files = {}
+  machine(on, files, 'MacBook')
+  on('tool.call', () => ({ result: { type: 'update' } }) as never)
+  await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Write', file_path: '/proj/src/a.cs', content: 'x' })
+  await $.turn.complete({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't', reason: 'answer' })
+  expect(files['/proj/.claude/handoff.md']).toBeUndefined()
 })

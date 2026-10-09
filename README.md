@@ -86,7 +86,7 @@ The percentages come from Anthropic's own rate-limit headers, so they cover **th
 Continue on another machine where you stopped.
 
 - **`/handoff [note]`** has Claude Haiku 5.5 summarize the session (where you stopped, what was done, next steps, gotchas) and writes it to `.claude/handoff.md` with the files you changed and the git state.
-- **Automatic handoff.** Every turn that edits files refreshes the file list, so there's a record even if the session dies.
+- **Automatic handoff** (off by default). When `autoHandoff` is on, every turn that edits files refreshes the file list, so there's a record even if the session dies.
 - **On the other machine**, the next session in that project shows *"↪ Handoff from MacBook (3h ago): …"* above the prompt, with **Continue from here**, **View** and **Dismiss** buttons.
 - **Long-turn alert:** a toast, plus a chime on macOS, when a turn runs longer than 3 minutes. Optionally spoken.
 
@@ -96,7 +96,7 @@ The handoff file travels with your project, through a git push or a synced folde
 |---|---|
 | `longTurnMinutes` | `3` |
 | `sound` / `speak` | `true` / `false` |
-| `autoHandoff` | `true` |
+| `autoHandoff` | `false` (turn on to refresh the file after every turn that edits) |
 | `handoffPath` | `.claude/handoff.md` |
 
 ## unity-tools
