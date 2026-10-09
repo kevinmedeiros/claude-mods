@@ -126,6 +126,13 @@ export type WindowView = {
   hoursAhead?: number
   /** Horas de trabalho por dia usadas na projeção do semanal. */
   activeHoursPerDay?: number
+  /**
+   * Só no semanal: horas de uso que restam no ritmo da última hora de trabalho,
+   * medido pelo limite de 5h. Informação extra; a projeção usa o ritmo da conta.
+   */
+  workHoursLeft?: number
+  /** %/h de uso do semanal no ritmo da última hora de trabalho. */
+  workRatePerHour?: number
   /** Média de %/h desde o início da janela. */
   windowRatePerHour?: number
   /** %/h na última hora (5h) ou nas últimas 24h (semanal). */

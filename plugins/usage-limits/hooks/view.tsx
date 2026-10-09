@@ -78,11 +78,18 @@ const durationText = (w: WindowView) =>
         ? 'sem consumo'
         : durationLabel(w)
 
-/** No semanal medido por trabalho: quantos dias isso dá no seu ritmo de horas por dia. */
+/** Só no semanal: horas de uso no ritmo da última hora de trabalho (pelo limite de 5h). */
 const workDaysText = (w: WindowView) =>
-  w.rateSource === 'work' && w.hoursLeft !== undefined && w.activeHoursPerDay
-    ? `≈ ${(w.hoursLeft / w.activeHoursPerDay).toFixed(1).replace('.', ',')} dias trabalhando ~${Math.round(w.activeHoursPerDay)}h/dia`
+  w.workHoursLeft !== undefined
+    ? `~${hours(w.workHoursLeft)} de uso no ritmo da última hora` +
+      (w.activeHoursPerDay ? ` (≈ ${(w.workHoursLeft / w.activeHoursPerDay).toFixed(1).replace('.', ',')} dias de ~${Math.round(w.activeHoursPerDay)}h)` : '')
     : undefined
+
+/** No semanal: quantos pontos por dia a conta está gastando. */
+const perDayText = (w: WindowView) =>
+  w.ratePerHour === undefined ? '—' : `${Math.round(w.ratePerHour * 24)} pts/dia`
+
+const isWeekly = (w: WindowView) => w.kind.startsWith('seven_day')
 
 /** "atualizado 09:12" e, se a leitura for velha, de quando ela é e de onde veio. */
 const freshness = (snap: Snapshot) => {
@@ -359,8 +366,8 @@ const WindowCard = (ui: RichUi, w: WindowView, now: number, px: number) => {
       <Box flexDirection="row" columnGap={3} flexWrap="wrap">
         {Stat(ui, 'dur', 'Duração estimada', durationText(w), colorOf(w))}
         {Stat(ui, 'reset', 'Reset em', resetText(w, now))}
-        {w.rateSource === 'work'
-          ? Stat(ui, 'rate', 'Ritmo de trabalho', `${rateText(w.ratePerHour)} de uso`)
+        {isWeekly(w)
+          ? Stat(ui, 'rate', 'Ritmo da conta', perDayText(w))
           : Stat(ui, 'rate', 'Ritmo recente', rateText(w.recentRatePerHour))}
         {Stat(ui, 'avg', 'Média da janela', rateText(w.windowRatePerHour))}
       </Box>
@@ -459,7 +466,9 @@ export const RichBand = (ui: RichUi, data: ViewData, actions: Actions) => {
             {percent(w.pct)}
           </Text>
           <Text dimColor>
-            dura {durationText(w)} · reset {w.resetsAt === undefined ? '—' : hours((w.msToReset ?? 0) / HOUR)}
+            dura {durationText(w)}
+            {w.workHoursLeft !== undefined ? ` (~${hours(w.workHoursLeft)} de uso)` : ''} · reset{' '}
+            {w.resetsAt === undefined ? '—' : hours((w.msToReset ?? 0) / HOUR)}
           </Text>
         </Box>
       ))}
@@ -489,7 +498,9 @@ export const TerminalBand = (ui: TerminalUi, { snap, totals, economy, api }: Vie
             {percent(w.pct)}
           </Text>{' '}
           <Text dimColor>
-            dura {durationText(w)} · reset {w.resetsAt === undefined ? '—' : hours((w.msToReset ?? 0) / HOUR)}
+            dura {durationText(w)}
+            {w.workHoursLeft !== undefined ? ` (~${hours(w.workHoursLeft)} de uso)` : ''} · reset{' '}
+            {w.resetsAt === undefined ? '—' : hours((w.msToReset ?? 0) / HOUR)}
           </Text>
         </Text>
       ))}
@@ -530,8 +541,8 @@ export const TerminalPane = (ui: TerminalUi, { snap, totals, economy, api }: Vie
             </Text>
             <Text dimColor>
               {'  '}
-              {w.rateSource === 'work'
-                ? `ritmo de trabalho ${rateText(w.ratePerHour)} por hora de uso · ${workDaysText(w) ?? ''}`
+              {isWeekly(w)
+                ? `ritmo da conta ${perDayText(w)}${workDaysText(w) ? ` · ${workDaysText(w)}` : ''}`
                 : `ritmo ${rateText(w.recentRatePerHour)} recente · ${rateText(w.windowRatePerHour)} média da janela`}
             </Text>
             <Text color={colorOf(w)}>

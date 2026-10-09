@@ -10,6 +10,8 @@ import { activeHoursPerDay, addActivity, addHourly, recentMix, updateCalibration
 import type { Calibration, HourlyMix } from './pace'
 import { HAIKU_ID, costOf, family, modelKey } from './pricing'
 import {
+  HOUR,
+  MINUTE,
   addSample,
   apiShort,
   clockTime,
@@ -50,7 +52,6 @@ const ECONOMY_KEY = 'economy'
 const CALIBRATION_KEY = 'calibration'
 const ACTIVITY_KEY = 'activity'
 const HOURLY_KEY = 'hourly'
-const WORK_RATE_KEY = 'lastWorkRate'
 
 /** A leitura desta sessão e os arquivos que as sessões da máquina compartilham. */
 const reading = { ownAt: 0, own: [] as SessionRateLimit[], sharedFile: '', sessionsFile: '', selfId: '', startedAt: 0 }
@@ -113,7 +114,7 @@ const refreshApi = async ($: EngineInterface) => {
   try {
     for (let i = 0; i < 5; i++) {
       const r = await $.http.fetch(costReportUrl(bounds.start, now, page), {
-        headers: { 'x-api-key': apiConfig.key, 'anthropic-version': '2023-06-01', 'user-agent': 'usage-limits-mod/0.5' },
+        headers: { 'x-api-key': apiConfig.key, 'anthropic-version': '2023-06-01', 'user-agent': 'usage-limits-mod/0.6' },
       })
       if (!r.ok) {
         const held = await read($, api)
@@ -202,7 +203,6 @@ const refresh = async ($: EngineInterface, usage: SessionUsage, record: boolean)
 
   const perDay = activeHoursPerDay((await $.store.get(ACTIVITY_KEY)) as number[] | undefined, now)
   const ratio = weekPerFive((await $.store.get(CALIBRATION_KEY)) as Calibration | undefined)
-  const lastWorkRate = (await $.store.get(WORK_RATE_KEY)) as number | undefined
   let fiveRate: number | undefined
   const windows: WindowView[] = []
   const mixes: Record<string, Mix | undefined> = {}
@@ -215,13 +215,13 @@ const refresh = async ($: EngineInterface, usage: SessionUsage, record: boolean)
       await $.store.set(samplesKey(raw.kind), log)
     }
     const bucket = (await $.store.get(bucketKey(raw.kind))) as TokenBucket | undefined
-    const view = project(raw, now, log, bucket, { fiveRate, weekPerFive: ratio, lastWorkRate, activeHoursPerDay: perDay })
+    const view = project(raw, now, log, bucket, { fiveRate, weekPerFive: ratio, activeHoursPerDay: perDay })
     if (raw.kind === 'five_hour') {
+      // Nos primeiros 30 min de uma janela de 5h o ritmo é só ruído (1% em 9 min viraria 6,7%/h).
+      const elapsed5 = 5 * HOUR - (view.msToReset ?? 5 * HOUR)
       const recent = view.recentRatePerHour ?? 0
-      fiveRate = recent > 0 ? recent : (view.windowRatePerHour ?? 0) > 0 ? view.windowRatePerHour : undefined
-    }
-    if (view.rateSource === 'work' && ratio !== undefined && fiveRate !== undefined && view.ratePerHour !== undefined) {
-      await $.store.set(WORK_RATE_KEY, view.ratePerHour)
+      fiveRate =
+        elapsed5 < 30 * MINUTE ? undefined : recent > 0 ? recent : (view.windowRatePerHour ?? 0) > 0 ? view.windowRatePerHour : undefined
     }
     windows.push(view)
     mixes[raw.kind] = await loadMix($, view)

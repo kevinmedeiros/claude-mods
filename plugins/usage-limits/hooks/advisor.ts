@@ -110,7 +110,7 @@ export const advise = (
     }
   }
 
-  const unit = binding.rateSource === 'work' ? ' de uso' : ''
+  const unit = ''
 
   if (advice.isFine) {
     advice.headline =

@@ -294,31 +294,52 @@ test('calibração com as leituras reais da manhã: 1 ponto semanal a cada 4 do 
   expect(c?.sum5).toBe(8)
   expect(c?.sumWeek).toBe(2)
   expect(weekPerFive(c)).toBe(0.25)
-  // Uma janela de 5h nova começa do zero: 27% → 3% conta como +3, não como -24.
+  // Entre janelas de 5h nada é somado: o fim da janela anterior não foi visto.
   const next = updateCalibration(c, { kind: 'five_hour', percentUsed: 3, resetsAt: iso(NOW + 6 * HOUR) }, reading(0, 8).week)
-  expect(next?.sum5).toBe(11)
-  expect(next?.sumWeek).toBe(3)
+  expect(next?.sum5).toBe(8)
+  expect(next?.sumWeek).toBe(2)
 })
 
-test('semanal em horas de trabalho reage na hora à troca de Opus para Haiku', () => {
+test('regressão 09/10: noite com o 5h resetando não corrompe a calibração', () => {
+  // Ontem 22:24: 5h em 18%, semanal 33%. Hoje 07:19: janela de 5h nova em 1%, semanal 42%.
+  let c: Calibration | undefined
+  for (const [p5, pw] of [[10, 30], [14, 31], [18, 33]] as const) {
+    c = updateCalibration(c, { kind: 'five_hour', percentUsed: p5, resetsAt: iso(NOW - 2 * HOUR) }, reading(0, pw).week)
+  }
+  c = updateCalibration(c, { kind: 'five_hour', percentUsed: 1, resetsAt: iso(NOW + 5 * HOUR) }, reading(0, 42).week)
+  expect(c?.sum5).toBe(8)
+  expect(c?.sumWeek).toBe(3)
+  expect(weekPerFive(c)).toBe(0.375)
+  // Uma calibração antiga (sem versão) recomeça; uma razão absurda é descartada.
+  expect(weekPerFive({ weekResetsAt: 0, sum5: 3, sumWeek: 34 })).toBeUndefined()
+  expect(weekPerFive({ v: 2, weekResetsAt: 0, sum5: 6, sumWeek: 34 })).toBeUndefined()
+})
+
+test('regressão 09/10: semanal em 43% depois de 27h segue o ritmo da conta', () => {
+  const now = Date.parse('2026-10-09T10:19:00Z')
+  const week = { kind: 'seven_day', percentUsed: 43, resetsAt: '2026-10-15T07:00:00Z' }
+  const w = project(week, now, undefined, undefined, { fiveRate: 2, weekPerFive: 0.265, activeHoursPerDay: 8 })
+  expect(w.rateSource).toBe('window')
+  expect(Math.round((w.ratePerHour ?? 0) * 24)).toBe(38)
+  expect(Math.round(w.hoursLeft ?? 0)).toBe(36)
+  expect(w.verdict).toBe('exhausts')
+  expect(statusPart(w)).toBe('Sem 43% dura ~36h ⚠')
+  // O extra: horas de uso no ritmo da última hora.
+  expect(Math.round(w.workHoursLeft ?? 0)).toBe(108)
+})
+
+test('horas de uso no ritmo da última hora reagem à troca de Opus para Haiku', () => {
   const week = { kind: 'seven_day', percentUsed: 7, resetsAt: iso(NOW + 163 * HOUR) }
-  // Opus executando: o 5h anda 8%/h → semanal 2%/h de trabalho.
+  // Opus executando: o 5h anda 8%/h → semanal 2%/h de uso.
   const opus = project(week, NOW, undefined, undefined, { fiveRate: 8, weekPerFive: 0.25, activeHoursPerDay: 8 })
-  expect(opus.rateSource).toBe('work')
-  expect(Math.round(opus.hoursLeft ?? 0)).toBe(47)
-  expect(opus.verdict).toBe('exhausts')
-  expect(statusPart(opus)).toBe('Sem 7% dura ~47h de uso ⚠')
-  // Haiku executando: o 5h passa a 1,5%/h → semanal folgado.
+  expect(Math.round(opus.workHoursLeft ?? 0)).toBe(47)
+  // Haiku executando: o 5h passa a 1,5%/h.
   const haiku = project(week, NOW, undefined, undefined, { fiveRate: 1.5, weekPerFive: 0.25, activeHoursPerDay: 8 })
-  expect(Math.round(haiku.hoursLeft ?? 0)).toBe(248)
-  expect(haiku.verdict).toBe('ok')
-  expect(Math.round(haiku.pctAtReset ?? 0)).toBe(27)
-  // 5h parado: usa o último ritmo de trabalho medido, não "infinito".
-  const idle = project(week, NOW, undefined, undefined, { fiveRate: undefined, weekPerFive: 0.25, lastWorkRate: 0.375, activeHoursPerDay: 8 })
-  expect(Math.round(idle.hoursLeft ?? 0)).toBe(248)
-  // Sem calibração ainda: volta para o ritmo por dia.
-  const plain = project(week, NOW, undefined, undefined, { fiveRate: 8, activeHoursPerDay: 8 })
-  expect(plain.rateSource).toBe('window')
+  expect(Math.round(haiku.workHoursLeft ?? 0)).toBe(248)
+  // A projeção até o reset é a da conta, igual nos dois casos.
+  expect(opus.pctAtReset).toBe(haiku.pctAtReset)
+  // Sem calibração: sem o extra.
+  expect(project(week, NOW, undefined, undefined, { fiveRate: 8, activeHoursPerDay: 8 }).workHoursLeft).toBeUndefined()
 })
 
 test('horas de trabalho por dia', () => {

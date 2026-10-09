@@ -8,6 +8,8 @@ import type { RawWindow } from './projection'
  * passa a refletir a última hora de trabalho, não o dia inteiro.
  */
 export type Calibration = {
+  /** Versão da regra de medição; uma calibração de outra versão começa do zero. */
+  v?: number
   weekResetsAt: number
   sum5: number
   sumWeek: number
@@ -25,10 +27,13 @@ export const updateCalibration = (
   const reset5 = resetOf(five)
   if (Number.isNaN(weekReset) || Number.isNaN(reset5)) return held
   const c: Calibration =
-    held && sameWindow(held.weekResetsAt, weekReset) ? { ...held } : { weekResetsAt: weekReset, sum5: 0, sumWeek: 0 }
-  if (c.last) {
-    // Uma janela de 5h nova começa do zero.
-    const d5 = sameWindow(c.last.reset5, reset5) ? five.percentUsed - c.last.p5 : five.percentUsed
+    held && held.v === CALIBRATION_VERSION && sameWindow(held.weekResetsAt, weekReset)
+      ? { ...held }
+      : { v: CALIBRATION_VERSION, weekResetsAt: weekReset, sum5: 0, sumWeek: 0 }
+  // Só mede dentro da mesma janela de 5h. Entre janelas o mod não vê o fim da
+  // anterior, e o salto do semanal pareceria vir de quase nada do 5h.
+  if (c.last && sameWindow(c.last.reset5, reset5)) {
+    const d5 = five.percentUsed - c.last.p5
     const dWeek = week.percentUsed - c.last.pWeek
     if (d5 >= 0 && dWeek >= 0) {
       c.sum5 += d5
@@ -40,9 +45,18 @@ export const updateCalibration = (
   return c
 }
 
-/** Pontos do semanal por ponto do 5h; só com movimento suficiente para medir. */
-export const weekPerFive = (c: Calibration | undefined) =>
-  c && c.sum5 >= 6 && c.sumWeek > 0 ? c.sumWeek / c.sum5 : undefined
+export const CALIBRATION_VERSION = 2
+
+/**
+ * Pontos do semanal por ponto do 5h; só com movimento suficiente para medir e
+ * dentro de uma faixa plausível (um ponto do 5h nunca vale mais que 1,5 do semanal).
+ */
+export const weekPerFive = (c: Calibration | undefined) => {
+  if (!c || c.v !== CALIBRATION_VERSION || c.sum5 < 6 || c.sumWeek <= 0) return undefined
+  const ratio = c.sumWeek / c.sum5
+
+  return ratio >= 0.05 && ratio <= 1.5 ? ratio : undefined
+}
 
 // ---------- horas de trabalho por dia ----------
 

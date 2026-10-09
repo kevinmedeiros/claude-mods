@@ -95,8 +95,6 @@ export type WorkPace = {
   fiveRate?: number
   /** Pontos do semanal por ponto do 5h. */
   weekPerFive?: number
-  /** O último ritmo de trabalho medido, para quando o 5h está parado. */
-  lastWorkRate?: number
   activeHoursPerDay: number
 }
 
@@ -140,25 +138,12 @@ export const project = (
   const points = log && sameWindow(log.resetsAt, resetsAt) ? log.points : []
   view.recentRatePerHour = recentRate(points, pct, now, recentLookback(length), minPeriod(length))
 
-  const workRate =
-    raw.kind === 'seven_day' && work
-      ? work.weekPerFive !== undefined && work.fiveRate !== undefined && work.fiveRate > 0
-        ? work.weekPerFive * work.fiveRate
-        : work.lastWorkRate
-      : undefined
-
-  if (workRate !== undefined && work && workRate > 0) {
-    // Semanal por horas de trabalho: o ritmo da última hora, nas horas por dia em que você trabalha.
-    view.rateSource = 'work'
-    view.ratePerHour = workRate
+  // Extra do semanal: horas de uso no ritmo da última hora, pelo limite de 5h.
+  // A projeção principal segue o número da conta (todas as máquinas, noite inclusive).
+  if (raw.kind === 'seven_day' && work?.weekPerFive !== undefined && work.fiveRate !== undefined && work.fiveRate > 0) {
+    view.workRatePerHour = work.weekPerFive * work.fiveRate
+    view.workHoursLeft = (100 - pct) / view.workRatePerHour
     view.activeHoursPerDay = work.activeHoursPerDay
-    view.hoursAhead = (work.activeHoursPerDay * view.msToReset) / DAY
-    view.hoursLeft = (100 - pct) / workRate
-    view.pctAtReset = pct + workRate * view.hoursAhead
-    view.verdict = verdictOf(view.pctAtReset)
-    if (view.pctAtReset >= 100) view.exhaustAt = now + (view.hoursLeft / work.activeHoursPerDay) * DAY
-
-    return view
   }
 
   const rate = view.recentRatePerHour ?? view.windowRatePerHour
