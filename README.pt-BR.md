@@ -2,12 +2,12 @@
 
 # claude-mods
 
-**Mods para o Claude Code: veja quanto tempo o seu plano dura, passe o trabalho de uma máquina para outra e dê ao Claude olhos para o Unity e o Blender.**
+**Mods para o Claude Code: veja quanto tempo o seu plano dura, tenha o roadmap à vista, passe o trabalho de uma máquina para outra e dê ao Claude olhos para o Unity e o Blender.**
 
 [![Licença: MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-blue.svg)](LICENSE)
 [![Plugins do Claude Code](https://img.shields.io/badge/Claude%20Code-plugins-d97757)](https://code.claude.com/docs)
-![Mods](https://img.shields.io/badge/mods-5-informational)
-![Testes](https://img.shields.io/badge/testes-50%20passando-brightgreen)
+![Mods](https://img.shields.io/badge/mods-6-informational)
+![Testes](https://img.shields.io/badge/testes-77%20passando-brightgreen)
 
 [English](README.md) · [Português](README.pt-BR.md)
 
@@ -17,13 +17,14 @@
 
 ---
 
-Mods do Claude Code são plugins de **function hooks**: TypeScript que roda dentro do Claude Code e pode desenhar painéis e faixas, criar comandos, observar as ferramentas e devolver contexto ao modelo. Este repositório é um marketplace com cinco deles, feitos para o uso diário num plano Max e em projetos de jogo.
+Mods do Claude Code são plugins de **function hooks**: TypeScript que roda dentro do Claude Code e pode desenhar painéis e faixas, criar comandos, observar as ferramentas e devolver contexto ao modelo. Este repositório é um marketplace com seis deles, feitos para o uso diário num plano Max e em projetos de jogo.
 
 | Mod | O que entrega |
 |---|---|
 | [**usage-limits**](#usage-limits) | Os limites de 5h e semanal com **quanto tempo duram** no ritmo atual, tokens e custo de todas as sessões abertas, gasto por projeto, acompanhamento dos créditos de API e uma recomendação de modelo para você não ficar sem uso antes do reset. |
 | [**fluxo**](#fluxo) | `/handoff` grava onde você parou para a próxima sessão, em outra máquina, continuar de lá; e som e notificação quando um turno longo termina. |
 | [**tarefas**](#tarefas) | As tarefas do projeto num `TASKS.md` simples: painel, a próxima tarefa acima do prompt com os botões *Começar* e *Feita*, e o Claude criando e concluindo tarefas enquanto trabalha. |
+| [**roadmap**](#roadmap) | Em que ponto o projeto está no roadmap: a fase atual e o progresso acima do prompt com o botão *Fazer a próxima*, o que você pode fazer agora, um aviso quando os commits passam à frente do roadmap, e o Claude marcando o que terminou com a evidência. |
 | [**unity-tools**](#unity-tools) | Erros de compilação entregues ao Claude segundos depois de ele editar um `.cs`, testes EditMode/PlayMode que ele pode rodar sozinho, painel de build do servidor dedicado e guardas que o mantêm longe de `Library/`, cenas e `.meta`. |
 | [**blender-preview**](#blender-preview) | Miniatura da cena do Blender com orçamento de triângulos, ossos e texturas, e conferência de cada `.glb` que o Claude exporta. |
 
@@ -35,6 +36,7 @@ Precisa de um Claude Code recente (testado da 2.1.286 à 2.1.295). Num terminal,
 /plugin install usage-limits --marketplace kevinmedeiros/claude-mods
 /plugin install fluxo --marketplace kevinmedeiros/claude-mods
 /plugin install tarefas --marketplace kevinmedeiros/claude-mods
+/plugin install roadmap --marketplace kevinmedeiros/claude-mods
 /plugin install unity-tools --marketplace kevinmedeiros/claude-mods
 /plugin install blender-preview --marketplace kevinmedeiros/claude-mods
 ```
@@ -115,6 +117,25 @@ A lista do que falta no projeto, num `TASKS.md` na raiz (o mesmo formato da skil
 | `showBand` | `true` |
 | `claudeCanEdit` | `true` |
 
+## roadmap
+
+Em que ponto o projeto está no roadmap, num `docs/roadmap.json` que o Claude atualiza enquanto trabalha.
+
+- **Acima do prompt:** *"Roadmap · Fase 2 Beta fechado · 16% · Próxima: Login por e-mail (Claude) · 1 com você agora"* com **Fazer a próxima** (escreve o pedido para você), **Ver roadmap** e **Ocultar**.
+- **`/roadmap`** abre o painel: cada fase com o % e a barra, as cinco próximas tarefas com quem faz e o botão **Pedir ao Claude**, o que está com você agora e depois, o que está esperando e o quê, e os itens da fase atual por estado, seis por lista, com as outras fases só na contagem.
+- **Aviso de desatualizado.** Quando o projeto passa de 10 commits sem mexer no roadmap, a faixa e o painel avisam.
+- **O Claude mantém o roadmap em dia.** Ele ganha as ferramentas `roadmap_status`, `roadmap_update` e `roadmap_add`: marca o que terminou com a evidência (um commit, um teste, um arquivo) e cria os itens que surgirem, sempre com aviso na tela. O `roadmap_status` acha o id de qualquer item por palavras do título, e depois de cada `git commit` o Claude é lembrado de marcar o que o commit terminou. Desligue as ferramentas de escrita em `claudeCanEdit`.
+- **Linha de status** com a fase e o %.
+
+O formato do arquivo, com um exemplo, está no [README do mod](plugins/roadmap/README.md) (em inglês).
+
+| Opção | Padrão |
+|---|---|
+| `file` | `docs/roadmap.json` |
+| `showBand` | `true` |
+| `staleAfter` | `10` (commits; `0` desliga o aviso) |
+| `claudeCanEdit` | `true` |
+
 ## unity-tools
 
 Liga em qualquer sessão cuja pasta tenha um projeto Unity. Ele procura `ProjectSettings/` acima da pasta da sessão ou até dois níveis abaixo.
@@ -166,12 +187,12 @@ Funciona com o Blender conectado ao Claude Code por um servidor MCP do Blender.
 
 Tudo fica na sua máquina.
 
-- **Arquivos locais.** Os mods gravam em `~/.claude/usage-limits/`, no armazenamento de cada plugin e em `.claude/handoff.md` e `TASKS.md` no seu projeto.
+- **Arquivos locais.** Os mods gravam em `~/.claude/usage-limits/`, no armazenamento de cada plugin e em `.claude/handoff.md`, `TASKS.md` e `docs/roadmap.json` no seu projeto.
 - **Requisições de rede:**
   - o `usage-limits` chama a API de custo do Console, e só se você configurar uma Admin key;
   - o `fluxo` chama o Claude Haiku 5.5 quando você roda `/handoff`;
   - nada mais sai da máquina.
-- **Processos locais:** o `unity-tools` roda o `dotnet` e o editor do Unity; o `blender-preview` fala com o seu Blender local pelo MCP.
+- **Processos locais:** o `unity-tools` roda o `dotnet` e o editor do Unity; o `blender-preview` fala com o seu Blender local pelo MCP; o `roadmap` roda comandos do `git` só de leitura (`rev-parse`, `log`, `rev-list`, `diff`) para contar os commits desde a última mudança no roadmap.
 
 ## Desenvolvimento
 

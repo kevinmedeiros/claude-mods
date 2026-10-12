@@ -1,0 +1,36 @@
+{
+  "name": "roadmap",
+  "version": "0.1.0",
+  "description": "O roadmap do projeto num JSON: fase atual e % acima do prompt, próximas tarefas, o que você pode fazer agora, aviso de desatualizado e o Claude marcando o que fez",
+  "author": { "name": "Kevin Medeiros" },
+  "license": "MIT",
+  "repository": "https://github.com/kevinmedeiros/claude-mods",
+  "homepage": "https://github.com/kevinmedeiros/claude-mods#roadmap",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "file": {
+      "type": "string",
+      "title": "Arquivo do roadmap",
+      "description": "JSON no formato do mod, relativo à raiz do projeto (git) ou à pasta da sessão",
+      "default": "docs/roadmap.json"
+    },
+    "showBand": {
+      "type": "boolean",
+      "title": "Roadmap acima do prompt",
+      "description": "Mostra a fase, o % e a próxima tarefa com os botões Fazer a próxima, Ver roadmap e Ocultar",
+      "default": true
+    },
+    "staleAfter": {
+      "type": "number",
+      "title": "Aviso de desatualizado (commits)",
+      "description": "Avisa quando o projeto passa deste número de commits sem mexer no roadmap; 0 desliga",
+      "default": 10
+    },
+    "claudeCanEdit": {
+      "type": "boolean",
+      "title": "O Claude atualiza o roadmap",
+      "description": "Dá ao Claude as ferramentas para marcar e criar itens (sempre com aviso na tela)",
+      "default": true
+    }
+  }
+}

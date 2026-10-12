@@ -2,12 +2,12 @@
 
 # claude-mods
 
-**Live mods for Claude Code: see how long your plan will last, hand work off between machines, and give Claude eyes on Unity and Blender.**
+**Live mods for Claude Code: see how long your plan will last, keep the roadmap in view, hand work off between machines, and give Claude eyes on Unity and Blender.**
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Claude Code plugins](https://img.shields.io/badge/Claude%20Code-plugins-d97757)](https://code.claude.com/docs)
-![Mods](https://img.shields.io/badge/mods-5-informational)
-![Tests](https://img.shields.io/badge/tests-50%20passing-brightgreen)
+![Mods](https://img.shields.io/badge/mods-6-informational)
+![Tests](https://img.shields.io/badge/tests-77%20passing-brightgreen)
 
 [English](README.md) · [Português](README.pt-BR.md)
 
@@ -17,13 +17,14 @@
 
 ---
 
-Claude Code mods are plugins of **function hooks**: TypeScript that runs inside Claude Code and can draw panes and bands, add slash commands, watch tool calls, and feed context back to the model. This repository is a marketplace of five of them, built for daily use on a Max plan and on game projects.
+Claude Code mods are plugins of **function hooks**: TypeScript that runs inside Claude Code and can draw panes and bands, add slash commands, watch tool calls, and feed context back to the model. This repository is a marketplace of six of them, built for daily use on a Max plan and on game projects.
 
 | Mod | What it gives you |
 |---|---|
 | [**usage-limits**](#usage-limits) | Your 5-hour and weekly limits with **how long they will last** at your current pace, tokens and cost across every open session, a per-project breakdown, API-credit tracking, and a model recommendation that keeps you from running dry before the reset. |
 | [**fluxo**](#fluxo) | `/handoff` writes where you stopped so the next session on another machine picks it up, plus a sound and notification when a long turn finishes. |
 | [**tarefas**](#tarefas) | The project's tasks in a plain `TASKS.md`: a pane, the next task above the prompt with *Start* and *Done* buttons, and Claude creating and finishing tasks as it works. |
+| [**roadmap**](#roadmap) | Where the project stands on its roadmap: the current phase and its progress above the prompt with a *Do next* button, what you can do now, a warning when commits run ahead of the roadmap, and Claude checking items off with the evidence. |
 | [**unity-tools**](#unity-tools) | Compiler errors handed to Claude seconds after it edits a `.cs`, EditMode/PlayMode tests it can run on its own, a dedicated-server build pane, and guards that keep it out of `Library/`, scenes and `.meta` files. |
 | [**blender-preview**](#blender-preview) | A live thumbnail of the Blender scene with triangle, bone and texture budgets, and a check of every `.glb` Claude exports. |
 
@@ -38,6 +39,7 @@ You need a recent Claude Code (tested on 2.1.286 – 2.1.295). In a terminal, st
 /plugin install usage-limits --marketplace kevinmedeiros/claude-mods
 /plugin install fluxo --marketplace kevinmedeiros/claude-mods
 /plugin install tarefas --marketplace kevinmedeiros/claude-mods
+/plugin install roadmap --marketplace kevinmedeiros/claude-mods
 /plugin install unity-tools --marketplace kevinmedeiros/claude-mods
 /plugin install blender-preview --marketplace kevinmedeiros/claude-mods
 ```
@@ -118,6 +120,25 @@ The project's to-do list, kept in a `TASKS.md` at the project root (the same for
 | `showBand` | `true` |
 | `claudeCanEdit` | `true` |
 
+## roadmap
+
+Where the project stands on its roadmap, kept in a `docs/roadmap.json` that Claude updates as it works.
+
+- **Above the prompt:** *"Roadmap · Phase 2 Closed beta · 16% · Next: Email sign-in (Claude) · 1 with you now"* with **Do next** (writes the request for you), **View roadmap** and **Hide**.
+- **`/roadmap`** opens the pane: every phase with its % and bar, the next five tasks with who does them and an **Ask Claude** button, what is with you now and later, what is waiting and on what, and the current phase's items by state, six per list with the other phases as counts.
+- **Out-of-date warning.** When the project has more than 10 commits since the roadmap last changed, the band and the pane say so.
+- **Claude keeps it current.** It gets `roadmap_status`, `roadmap_update` and `roadmap_add`, so it checks items off with the evidence (a commit, a test, a file) and adds the work it finds, with a toast every time. `roadmap_status` finds any item's id by words of its title, and after each `git commit` Claude is reminded to check off what the commit finished. Turn the writing tools off with `claudeCanEdit`.
+- **Status line** with the phase and its %.
+
+The file format, with an example, is in the [mod's README](plugins/roadmap/README.md).
+
+| Option | Default |
+|---|---|
+| `file` | `docs/roadmap.json` |
+| `showBand` | `true` |
+| `staleAfter` | `10` (commits; `0` turns the warning off) |
+| `claudeCanEdit` | `true` |
+
 ## unity-tools
 
 Turns on in any session whose folder holds a Unity project. It finds `ProjectSettings/` above or up to two levels below the session's folder.
@@ -169,12 +190,12 @@ Works with Blender connected to Claude Code through a Blender MCP server.
 
 Everything stays on your machine.
 
-- **Local files.** The mods write to `~/.claude/usage-limits/`, to each plugin's own store, to `.claude/handoff.md` and `TASKS.md` in your project.
+- **Local files.** The mods write to `~/.claude/usage-limits/`, to each plugin's own store, to `.claude/handoff.md`, `TASKS.md` and `docs/roadmap.json` in your project.
 - **Network requests:**
   - `usage-limits` calls the Console cost API, and only when you set an Admin key.
   - `fluxo` calls Claude Haiku 5.5 when you run `/handoff`.
   - Nothing else leaves your machine.
-- **Local processes:** `unity-tools` runs `dotnet` and the Unity editor; `blender-preview` talks to your local Blender through MCP.
+- **Local processes:** `unity-tools` runs `dotnet` and the Unity editor; `blender-preview` talks to your local Blender through MCP; `roadmap` runs read-only `git` commands (`rev-parse`, `log`, `rev-list`, `diff`) to count the commits since the roadmap changed.
 
 ## Development
 
