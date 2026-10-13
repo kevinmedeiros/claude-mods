@@ -1,7 +1,7 @@
 {
   "name": "roadmap",
-  "version": "0.1.0",
-  "description": "O roadmap do projeto num JSON: fase atual e % acima do prompt, próximas tarefas, o que você pode fazer agora, aviso de desatualizado e o Claude marcando o que fez",
+  "version": "0.2.0",
+  "description": "O roadmap do projeto num quadro: trilha das fases, kanban do que anda, a fase e o % acima do prompt, e o Claude marcando o que fez",
   "author": { "name": "Kevin Medeiros" },
   "license": "MIT",
   "repository": "https://github.com/kevinmedeiros/claude-mods",
@@ -17,7 +17,7 @@
     "showBand": {
       "type": "boolean",
       "title": "Roadmap acima do prompt",
-      "description": "Mostra a fase, o % e a próxima tarefa com os botões Fazer a próxima, Ver roadmap e Ocultar",
+      "description": "Uma linha com a fase, o %, a próxima tarefa e os botões Fazer, Roadmap e Ocultar",
       "default": true
     },
     "staleAfter": {

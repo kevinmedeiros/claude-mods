@@ -1,40 +1,60 @@
 import { atom, read, update } from 'claude-code'
-import type { Elements, EngineInterface, Register, RenderElement } from 'claude-code'
+import type { Elements, EngineInterface, Register } from 'claude-code'
 
-import type { Board, Item, ItemStatus, Roadmap, Summary } from '../types'
+import type { Board, Card, ColumnId, Counts, Decision, Item, Kanban, KanbanColumn, Roadmap, Summary } from '../types'
 import {
-  BAND_TITLE_MAX,
-  DONE_SHOWN,
+  CARD_STEP,
+  DECISIONS_SHOWN,
   ITEM_LABEL,
   ITEM_MARK,
-  PANE_LIMIT,
-  PHASE_LABEL,
   applyAdd,
   applyUpdate,
-  barSvg,
+  bandBar,
+  cardLabel,
+  countsText,
+  currentPhase,
   cut,
+  gateChip,
   hash,
+  isStuck,
+  itemLabel,
+  kanban,
+  mineCount,
   missingText,
-  ownerLabel,
+  newlyDone,
+  ownerChip,
+  ownerKind,
+  paneSvgWidth,
   parseRoadmap,
   pendingDeps,
-  phaseLabel,
-  recentDone,
+  phaseCounts,
+  phaseTitle,
+  planBand,
   reportText,
+  segBarSvg,
+  splitBar,
+  staleChip,
+  staleCount,
   staleText,
   startPrompt,
   statusLine,
   summarize,
-  textBar,
+  trailAlt,
+  trailSvg,
+  trailText,
 } from './roadmap'
-import type { AddInput, Change, StatusInput, UpdateInput } from './roadmap'
+import type { AddInput, Change, Seg, StatusInput, UpdateInput } from './roadmap'
 
 const PANE = 'roadmap'
 
 const board = atom({ plugin: 'roadmap', key: 'board' } as const, null)
 const stale = atom({ plugin: 'roadmap', key: 'stale' } as const, null)
 const hidden = atom({ plugin: 'roadmap', key: 'hidden' } as const, null)
-const notice = atom({ plugin: 'roadmap', key: 'notice' } as const, null)
+const filtering = atom({ plugin: 'roadmap', key: 'filter' } as const, 'all')
+const expanded = atom({ plugin: 'roadmap', key: 'expanded' } as const, {})
+const selected = atom({ plugin: 'roadmap', key: 'selected' } as const, null)
+const decisionsOpen = atom({ plugin: 'roadmap', key: 'decisions' } as const, false)
+const doneSeen = atom({ plugin: 'roadmap', key: 'doneSeen' } as const, {})
 
 /** Onde está o roadmap desta sessão. */
 const where = { root: '', file: '', rel: '', project: '', hasGit: false, staleAt: 0 }
@@ -47,9 +67,6 @@ const today = (now: number) => {
   const d = new Date(now)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
-
-const COLOR = { done: '#2f9e62', current: '#d97757', todo: '#8a8f98' } as const
-const THEME = { done: 'success', current: 'claude', todo: 'subtle' } as const
 
 /** Relê o roadmap; `force` relê mesmo sem mudança na data do arquivo. Diz se mudou. */
 const load = async ($: EngineInterface, force = false): Promise<boolean> => {
@@ -76,6 +93,12 @@ const load = async ($: EngineInterface, force = false): Promise<boolean> => {
     next = { path: where.file, rel: where.rel, project: where.project, exists: true, mtimeMs: 0, sig: 'erro', roadmap: null, error: 'não consegui ler o arquivo' }
   }
   if (held && JSON.stringify(held) === JSON.stringify(next)) return false
+  // O que virou feito desde a última leitura: no mesmo dia, ele vem primeiro na coluna Feito.
+  const fresh = held?.roadmap && next.roadmap ? newlyDone(held.roadmap, next.roadmap) : []
+  if (fresh.length > 0) {
+    const now = await $.clock.now()
+    await update($, doneSeen, seen => ({ ...seen, ...Object.fromEntries(fresh.map((id, n) => [id, now + n / 1000])) }))
+  }
   await update($, board, () => next)
   $.ui.status(!next.exists ? undefined : next.roadmap ? statusLine(summarize(next.roadmap)) : 'Roadmap com erro')
 
@@ -104,11 +127,6 @@ const refreshStale = async ($: EngineInterface) => {
     }
   }
   if ((await read($, stale)) !== commits) await update($, stale, () => commits)
-}
-
-const say = async ($: EngineInterface, text: string) => {
-  await update($, notice, () => text)
-  $.ui.toast(text, { timeoutMs: 6000 })
 }
 
 type Answer = { deny: string } | { result: string }
@@ -145,7 +163,7 @@ const change = ($: EngineInterface, apply: (text: string, day: string) => Change
       await $.fs.write(where.file, result.text)
       await load($, true)
       await refreshStale($)
-      await say($, `${by}: ${result.message}`)
+      $.ui.toast(`${by}: ${result.message}`, { timeoutMs: 6000 })
 
       return { result: result.message }
     }
@@ -187,288 +205,464 @@ const commitNote = async ($: EngineInterface, limit: number): Promise<string | u
 // ---------- interface ----------
 
 type BasicUi = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'>
-type Bar = (pct: number, tone: keyof typeof COLOR, key: string) => RenderElement
+/** As superfícies remotas desenham SVG; o terminal, glifos. */
+type Ui = BasicUi & { Svg?: Elements['desktop']['Svg'] }
 type Acts = { start: (item: Item) => () => void; view: () => void; hide: () => void; reload: () => void; create: () => void }
-type View = { b: Board; r: Roadmap; s: Summary; warning?: string }
+type View = { b: Board; r: Roadmap; s: Summary; commits?: number }
 
-/** A faixa: uma linha com a fase, o %, a próxima (com o título cortado) e o que você pode fazer agora. */
-const Band = (ui: BasicUi, v: View, bar: Bar | undefined, act: Acts) => {
-  const { Box, Text, Button } = ui
+/** Os tons do desenho nas cores do tema. */
+const TONE = { done: 'success', current: 'claude', doing: 'claude', todo: 'subtle' } as const
+const OWNER_COLOR = { me: 'claude', claude: 'suggestion', both: 'merged' } as const
+const STATUS_COLOR: Partial<Record<Item['status'], 'success' | 'claude' | 'inactive'>> = { done: 'success', doing: 'claude', blocked: 'inactive' }
+
+/** Um pedaço de texto com o tom dele (o "dim" sai apagado). */
+const seg = (ui: Ui, s: Seg) => {
+  const { Text } = ui
+  return s.tone === 'dim' ? <Text dimColor>{s.text}</Text> : <Text color={TONE[s.tone]} bold={s.tone === 'current'}>{s.text}</Text>
+}
+
+/** O chip do dono, colorido: "você" no destaque, "Claude", "os dois" ou o nome. */
+const OwnerChip = (ui: Ui, item: Item | Card, r: Roadmap) => {
+  const { Text } = ui
+  const kind = 'label' in item ? item.owner : ownerKind(item, r)
+  const text = 'label' in item ? item.ownerText : ownerChip(item, r)
+  if (!kind || !text) return undefined
+
+  return kind === 'other' ? <Text dimColor>{text}</Text> : <Text color={OWNER_COLOR[kind]}>{text}</Text>
+}
+
+/**
+ * A faixa: uma linha. "Fase 2 ▰▰▰▱▱ 43%  › próxima (você)  comigo: 2  ⚠ …  [ Fazer ] [ Roadmap ] ocultar".
+ * O rótulo da próxima fica inteiro: para caber, saem antes os chips, a barrinha, a moldura dos botões e o "Fase N".
+ */
+const Band = (ui: Ui, v: View, width: number, act: Acts, isTerminal: boolean) => {
+  const { Box, Text, Button, Svg } = ui
   const { r, s } = v
   const first = s.next[0]
   const cur = s.current
-  const who = first ? ownerLabel(first, r) : undefined
   const isAllDone = r.items.length > 0 && r.items.every(i => i.status === 'done')
+  const mine = mineCount(r)
+  const head = cur ? `Fase ${cur.phase.id}` : 'Roadmap'
+  const pct = cur ? `${cur.pct}%` : ''
+  const owner = first ? ownerChip(first, r) : undefined
+  const mineText = mine > 0 ? `comigo: ${mine}` : undefined
+  const warn = v.commits !== undefined ? `⚠ ${staleChip(v.commits)}` : undefined
+  const plan = planBand({
+    width,
+    head,
+    pct,
+    hasBar: !!cur,
+    label: first ? itemLabel(first) : isAllDone ? 'tudo feito' : 'nada livre agora',
+    hasNext: !!first,
+    owner,
+    mine: mineText,
+    stale: warn,
+    hide: isTerminal ? 'ocultar' : 'Ocultar',
+  })
+  const bar = cur && plan.bar ? bandBar(cur.pct) : undefined
+  const counts = cur ? phaseCounts(r, cur.phase.id) : undefined
+  const plain = plan.framed ? {} : ({ plain: true } as const)
 
   return (
-    <Box flexDirection="row" columnGap={2} flexWrap="wrap" alignItems="center">
-      {bar && cur ? bar(cur.pct, 'current', 'roadmap-bar') : undefined}
-      <Text>
+    <Box flexDirection="row" columnGap={1} alignItems="center" flexWrap="nowrap">
+      {plan.showHead ? (
         <Text bold color="claude">
-          Roadmap
+          {head}
         </Text>
-        {cur ? (
-          <Text>
-            {' · '}
-            <Text bold>{phaseLabel(cur.phase)}</Text> · {cur.pct}%
-          </Text>
-        ) : (
-          <Text dimColor> · sem fases</Text>
-        )}
+      ) : undefined}
+      {bar && counts && Svg ? (
+        <Svg source={segBarSvg(counts, 72)} alt={`${pct} da fase feito`} />
+      ) : bar ? (
+        <Text>
+          <Text color="claude">{bar.full}</Text>
+          <Text dimColor>{bar.empty}</Text>
+        </Text>
+      ) : undefined}
+      <Text wrap="truncate-end">
+        {pct ? <Text bold>{pct}</Text> : ''}
         {first ? (
           <Text>
-            {' · '}
-            <Text bold>Próxima:</Text> {cut(first.title, BAND_TITLE_MAX)}
-            {who ? <Text dimColor> ({who})</Text> : ''}
+            {'  › '}
+            {plan.label}
+            {plan.showOwner ? <Text dimColor> ({owner})</Text> : ''}
           </Text>
         ) : (
-          <Text dimColor> · {isAllDone ? 'tudo feito' : 'nada livre agora'}</Text>
+          <Text dimColor>
+            {'  '}
+            {plan.label}
+          </Text>
         )}
-        {s.mineNow.length > 0 ? <Text dimColor> · {s.mineNow.length} com você agora</Text> : ''}
+        {plan.showMine ? <Text color="claude">{`  ${mineText}`}</Text> : ''}
+        {plan.showStale ? <Text color="warning">{`  ${warn}`}</Text> : ''}
       </Text>
-      {v.warning ? <Text color="warning">{v.warning}</Text> : undefined}
-      {first ? <Button key="roadmap-go" label="Fazer a próxima" plain onPress={act.start(first)} /> : undefined}
-      <Button key="roadmap-view" label="Ver roadmap" plain onPress={act.view} />
-      <Button key="roadmap-hide" label="Ocultar" plain onPress={act.hide} />
+      {first ? <Button key="roadmap-go" label="Fazer" variant="primary" {...plain} onPress={act.start(first)} /> : undefined}
+      <Button key="roadmap-view" label={plan.framed ? 'Roadmap' : 'Ver'} {...plain} onPress={act.view} />
+      <Button key="roadmap-hide" label={isTerminal ? 'ocultar' : 'Ocultar'} plain dimColor role="dismiss" onPress={act.hide} />
     </Box>
   )
 }
 
-const ErrorBand = (ui: BasicUi, b: Board, act: Acts) => {
+const ErrorBand = (ui: Ui, b: Board, width: number, act: Acts, isTerminal: boolean) => {
   const { Box, Text, Button } = ui
 
   return (
-    <Box flexDirection="row" columnGap={2} flexWrap="wrap" alignItems="center">
-      <Text>
-        <Text bold color="claude">
-          Roadmap
-        </Text>
-        <Text color="error"> · roadmap com erro: {b.error}</Text>
+    <Box flexDirection="row" columnGap={1} alignItems="center" flexWrap="nowrap">
+      <Text color="error" wrap="truncate-end">
+        ⚠ Roadmap com erro: {cut(b.error ?? '', Math.max(10, width - 40))}
       </Text>
-      <Button key="roadmap-view" label="Ver roadmap" plain onPress={act.view} />
-      <Button key="roadmap-hide" label="Ocultar" plain onPress={act.hide} />
+      <Button key="roadmap-view" label="Roadmap" onPress={act.view} />
+      <Button key="roadmap-hide" label={isTerminal ? 'ocultar' : 'Ocultar'} plain dimColor role="dismiss" onPress={act.hide} />
     </Box>
   )
 }
 
-/** O painel /roadmap: fases, próximas, com você, esperando e a fase atual por estado. */
-const Pane = (ui: BasicUi, v: View, bar: Bar, act: Acts, last: string | null) => {
-  const { Box, Text, Button } = ui
-  const { b, r, s } = v
-  const labelWidth = Math.min(36, Math.max(...s.phases.map(p => phaseLabel(p.phase).length + 2), 10))
-  const itemLine = (i: Item, extra?: string) => {
-    const who = ownerLabel(i, r)
-    const deps = pendingDeps(i, r)
-    const details = [
-      who,
-      i.phase !== s.current?.phase.id && `Fase ${i.phase}`,
-      i.gate && 'gate',
-      extra,
-      i.status === 'blocked' && i.waitingOn && `espera: ${i.waitingOn}`,
-      deps.length > 0 && `depende de: ${deps.map(d => d.title).join(', ')}`,
-    ].filter(Boolean)
+/** A trilha das fases: um SVG que se ajusta à largura, ou glifos no terminal (os nós e o nome, em até duas linhas). */
+const Trail = (ui: Ui, s: Summary, width: number) => {
+  const { Box, Text, Svg } = ui
+  if (s.phases.length === 0) return undefined
+  // Sem width e height: a superfície usa a largura do próprio desenho, limitada ao espaço que há.
+  if (Svg) return <Svg source={trailSvg(s.phases, paneSvgWidth(width))} alt={trailAlt(s.phases)} />
+  const { nodes, labels } = trailText(s.phases, width)
 
+  return (
+    <Box key="trail" flexDirection="column">
+      <Text wrap="truncate-end">{nodes.map(n => seg(ui, n))}</Text>
+      {labels.map(line => (
+        <Text wrap="truncate-end">{line.map(n => seg(ui, n))}</Text>
+      ))}
+    </Box>
+  )
+}
+
+/** A barra da fase atual, segmentada: feito, em andamento e esperando (este mais claro, para a parte cheia bater com o %). */
+const PhaseBar = (ui: Ui, c: Counts, width: number) => {
+  const { Text, Svg } = ui
+  if (Svg) {
+    const px = Math.max(140, Math.min(480, paneSvgWidth(width) - 90))
+    return <Svg source={segBarSvg(c, px, 10)} alt={`${c.done} de ${c.total} feitos · ${c.doing} em andamento · ${c.blocked} esperando`} />
+  }
+  const cells = splitBar(c, Math.max(10, Math.min(40, width - 12)))
+
+  return (
+    <Text>
+      <Text color="success">{'█'.repeat(cells.done)}</Text>
+      <Text color="claude">{'█'.repeat(cells.doing)}</Text>
+      <Text color="inactive">{'▒'.repeat(cells.blocked)}</Text>
+      <Text dimColor>{'░'.repeat(cells.rest)}</Text>
+    </Text>
+  )
+}
+
+/** O cartão da fase atual: título, chip do gate, barra com o % e contagens. */
+const PhaseCard = (ui: Ui, v: View, width: number) => {
+  const { Box, Text } = ui
+  const cur = v.s.current
+  if (!cur) {
     return (
-      <Text>
-        {ITEM_MARK[i.status]} {i.title}
-        {details.length > 0 ? <Text dimColor> · {details.join(' · ')}</Text> : ''}
-      </Text>
+      <Box key="phase" borderStyle="round" borderColor="subtle" paddingX={1}>
+        <Text dimColor>Roadmap sem fases</Text>
+      </Box>
     )
   }
-  const more = (key: string, n: number, indent = 0) =>
-    n > 0 ? (
-      <Box key={key} paddingLeft={indent}>
-        <Text dimColor>… e mais {n}</Text>
-      </Box>
-    ) : undefined
-  /** Uma lista com título, cortada em PANE_LIMIT, e uma linha de contagem das outras fases. */
-  const section = (key: string, title: string, list: Item[], render: (i: Item) => RenderElement, elsewhere?: string) =>
-    list.length === 0 && !elsewhere ? undefined : (
-      <Box key={key} flexDirection="column" marginTop={1}>
-        {list.length > 0 ? (
-          <Text bold>
-            {title} ({list.length})
-          </Text>
-        ) : undefined}
-        {list.slice(0, PANE_LIMIT).map(render)}
-        {more(`${key}-more`, list.length - PANE_LIMIT)}
-        {elsewhere ? <Text dimColor>{elsewhere}</Text> : undefined}
-      </Box>
-    )
-  const byStatus = (status: ItemStatus) => r.items.filter(i => i.phase === s.current?.phase.id && i.status === status)
-  const doneTotal = s.doneElsewhere.reduce((sum, d) => sum + d.count, 0)
-  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
-  const doneHere = byStatus('done')
+  const c = phaseCounts(v.r, cur.phase.id)
+  const [done, doing, blocked, todo] = countsText(c).split('  ')
+  const gate = gateChip(cur.phase, width < 60)
 
   return (
-    <Box flexDirection="column">
+    <Box key="phase" flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1}>
       <Box flexDirection="row" columnGap={2} flexWrap="wrap" justifyContent="space-between">
-        <Text>
-          <Text bold>{r.project ?? b.project}</Text>
-          {r.goal ? <Text dimColor> · {r.goal}</Text> : ''}
+        <Text bold>{phaseTitle(cur.phase)}</Text>
+        {gate ? (
+          <Text color="warning" wrap="truncate-end">
+            ⚑ {gate}
+          </Text>
+        ) : undefined}
+      </Box>
+      <Box flexDirection="row" columnGap={1} alignItems="center">
+        {PhaseBar(ui, c, width)}
+        <Text bold color="claude">
+          {`${cur.pct}%`}
         </Text>
-        <Button key="roadmap-reload" label="↻" plain onPress={act.reload} />
       </Box>
-      <Text dimColor>
-        {r.updated ? `atualizado em ${r.updated} · ` : ''}
-        {b.rel}
+      <Text>
+        <Text color="success">{done}</Text>
+        {'  '}
+        <Text color="claude">{doing}</Text>
+        {'  '}
+        <Text color="inactive">{blocked}</Text>
+        {'  '}
+        <Text dimColor>{todo}</Text>
       </Text>
-      {v.warning ? <Text color="warning">⚠ {v.warning}</Text> : undefined}
+    </Box>
+  )
+}
 
-      <Box key="phases" flexDirection="column" marginTop={1}>
-        <Text bold>Fases</Text>
-        {s.phases.length === 0 ? <Text dimColor>Nenhuma fase.</Text> : undefined}
-        {s.phases.map(p => {
-          const tone = p.isCurrent ? 'current' : p.phase.status === 'done' ? 'done' : 'todo'
-          const mark = p.isCurrent ? '▶' : p.phase.status === 'done' ? '✓' : '○'
-          const gate = p.phase.gate ? `gate: ${p.phase.gate}${p.phase.gateStatus ? ` (${p.phase.gateStatus})` : ''}` : undefined
+type BoardActs = {
+  select: (id: string) => () => void
+  more: (column: ColumnId) => () => void
+  less: (column: ColumnId) => () => void
+  filter: (to: 'all' | 'mine') => () => void
+  start: (item: Item) => () => void
+  close: () => void
+}
 
-          return (
-            <Box key={`phase-${p.phase.id}`} flexDirection="row" columnGap={1} flexWrap="wrap" alignItems="center">
-              <Box minWidth={labelWidth}>
-                <Text bold={p.isCurrent} color={p.isCurrent ? 'claude' : undefined}>
-                  {mark} {phaseLabel(p.phase)}
-                </Text>
-              </Box>
-              {bar(p.pct, tone, `bar-${p.phase.id}`)}
-              <Text bold={p.isCurrent}>
-                {p.pct}% <Text dimColor>· {p.total > 0 ? `${p.done}/${p.total} · ` : ''}{PHASE_LABEL[p.phase.status]}</Text>
-              </Text>
-              {gate ? <Text dimColor>· {gate}</Text> : undefined}
-            </Box>
-          )
-        })}
+const BORDER: Record<Card['status'], { style: string; color: 'claude' | 'subtle' | 'inactive' | 'success' }> = {
+  doing: { style: 'round', color: 'claude' },
+  todo: { style: 'round', color: 'subtle' },
+  blocked: { style: 'dashed', color: 'inactive' },
+  done: { style: 'round', color: 'success' },
+}
+
+/**
+ * O detalhe de um item: o título inteiro (se o rótulo é outro), estado, dono, espera,
+ * dependências abertas, data e evidência, notas e os botões. Dentro do cartão aberto,
+ * ou numa caixa própria quando o cartão não está à vista.
+ */
+const Detail = (ui: Ui, item: Item, r: Roadmap, act: BoardActs, isBoxed: boolean) => {
+  const { Box, Text, Button } = ui
+  const deps = pendingDeps(item, r)
+  const done = item.status === 'done'
+  const owner = OwnerChip(ui, item, r)
+  const color = STATUS_COLOR[item.status]
+  const mark = `${ITEM_MARK[item.status]} ${ITEM_LABEL[item.status]}`
+  const facts = [item.doneAt && `feito em ${item.doneAt}`, item.evidence && cut(item.evidence, 80)].filter(Boolean).join(' · ')
+  // Dentro do cartão, o rótulo já aparece. Com "short", vai do título só o que ele acrescenta;
+  // sem "short", o cartão aberto já mostra o título inteiro no lugar do rótulo.
+  const short = item.short
+  const more = !short || item.title === short ? '' : item.title.startsWith(short) ? item.title.slice(short.length).replace(/^[\s:;,.–—-]+/, '') : item.title
+
+  const state = (
+    <Text key="detail-state">
+      {color ? <Text color={color}>{mark}</Text> : <Text>{mark}</Text>}
+      {owner ? ['  ', owner] : ''}
+      {isBoxed || item.phase !== currentPhase(r) ? <Text dimColor>{`  Fase ${item.phase}`}</Text> : ''}
+      {item.gate ? <Text color="warning">{'  Gate'}</Text> : ''}
+    </Text>
+  )
+
+  // Avulso, o título vem inteiro em cima; dentro do cartão, o estado primeiro e o título
+  // (só se for diferente do rótulo) e as notas cortados, para o cartão não crescer demais.
+  return (
+    <Box key="detail" flexDirection="column" {...(isBoxed ? { borderStyle: 'round', borderColor: 'claude', paddingX: 1 } : {})}>
+      {isBoxed ? <Text bold>{item.title}</Text> : state}
+      {isBoxed ? state : more ? <Text>{cut(more, 120)}</Text> : undefined}
+      {item.waitingOn && !done ? <Text>espera: {cut(item.waitingOn, 80)}</Text> : undefined}
+      {deps.length > 0 ? <Text>depois de: {deps.map(itemLabel).join(', ')}</Text> : undefined}
+      {done && facts ? <Text dimColor>{facts}</Text> : undefined}
+      {item.notes ? <Text dimColor>{cut(item.notes, isBoxed ? 160 : 100)}</Text> : undefined}
+      <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+        {!done ? <Button key="detail-start" label={isStuck(item, r) ? 'Ver o que falta' : 'Fazer agora'} variant="primary" onPress={act.start(item)} /> : undefined}
+        <Button key="detail-close" label="Fechar" onPress={act.close} />
       </Box>
+    </Box>
+  )
+}
 
-      {s.next.length > 0 ? (
-        <Box key="next" flexDirection="column" marginTop={1}>
-          <Text bold>Próximas</Text>
-          {s.next.map(i => (
-            <Box key={`next-${i.id}`} flexDirection="row" columnGap={1} flexWrap="wrap">
-              {itemLine(i)}
-              <Button key={`ask-${i.id}`} label="Pedir ao Claude" plain onPress={act.start(i)} />
-            </Box>
-          ))}
-        </Box>
-      ) : (
-        <Box key="next" marginTop={1}>
-          <Text dimColor>Nenhuma tarefa livre agora.</Text>
-        </Box>
-      )}
-      {section('mine-now', 'Com você agora', s.mineNow, i => (
-        <Box key={`mine-${i.id}`}>{itemLine(i, i.status !== 'todo' ? ITEM_LABEL[i.status] : undefined)}</Box>
-      ))}
-      {section(
-        'mine-later',
-        'Com você depois',
-        s.mineLater,
-        i => <Box key={`later-${i.id}`}>{itemLine(i, i.status !== 'todo' ? ITEM_LABEL[i.status] : undefined)}</Box>,
-        s.mineElsewhere > 0 ? `${plural(s.mineElsewhere, 'item', 'itens')} com você em outras fases` : undefined,
-      )}
-      {section(
-        'waiting',
-        'Esperando',
-        s.waiting,
-        i => <Box key={`wait-${i.id}`}>{itemLine(i)}</Box>,
-        s.waitingElsewhere > 0 ? `${plural(s.waitingElsewhere, 'bloqueado', 'bloqueados')} em outras fases` : undefined,
-      )}
+/**
+ * Um cartão: o rótulo (clicar abre e fecha) e, embaixo, o dono, o gate e a fase; nos que
+ * esperam, o que esperam. Aberto, o cartão mostra o detalhe ali mesmo, com borda grossa.
+ */
+const CardView = (ui: Ui, card: Card, r: Roadmap, inner: number, sel: string | null, act: BoardActs) => {
+  const { Box, Text, Button } = ui
+  const done = card.status === 'done'
+  // Quem espera (bloqueado, ou a fazer à espera de outra tarefa) tem a borda tracejada.
+  const border = card.waitKind ? BORDER.blocked : BORDER[card.status]
+  const item = card.id === sel ? r.items.find(i => i.id === card.id) : undefined
+  const chips = [
+    OwnerChip(ui, card, r),
+    card.gate ? <Text color="warning">Gate</Text> : undefined,
+    card.isOtherPhase ? <Text dimColor>Fase {card.phase}</Text> : undefined,
+  ].filter(c => c !== undefined)
+  const line2 = item ? (
+    Detail(ui, item, r, act, false)
+  ) : card.wait ? (
+    <Text dimColor>{cardLabel(`${card.waitKind === 'dep' ? 'depois de' : '‖'} ${card.wait}`, inner)}</Text>
+  ) : !done && chips.length > 0 ? (
+    <Text wrap="truncate-end">{chips.flatMap((c, n) => (n === 0 ? [c] : ['  ', c]))}</Text>
+  ) : undefined
 
-      {s.current ? (
-        <Box key="current" flexDirection="column" marginTop={1}>
-          <Text bold color="claude">
-            {phaseLabel(s.current.phase)}
-            {s.current.phase.goal ? <Text dimColor> · {s.current.phase.goal}</Text> : ''}
+  return (
+    <Box
+      key={`box-${card.id}`}
+      flexDirection="column"
+      borderStyle={item ? 'bold' : border.style}
+      borderColor={item ? 'claude' : border.color}
+      {...(done && !item ? { borderDimColor: true } : {})}
+      paddingX={1}
+    >
+      <Button
+        key={`card-${card.id}`}
+        label={item && !item.short ? cardLabel(cut(item.title, 160), inner, 4) : cardLabel(card.label, inner)}
+        plain
+        {...(done && !item ? { dimColor: true } : {})}
+        onPress={act.select(card.id)}
+      />
+      {line2}
+    </Box>
+  )
+}
+
+const HEADER_COLOR: Partial<Record<ColumnId, 'claude' | 'inactive' | 'success'>> = { doing: 'claude', waiting: 'inactive', done: 'success' }
+
+/** Uma coluna: o nome e o contador, os cartões, o "+8 de N" (abre mais 8) e o "menos". */
+const ColumnView = (ui: Ui, col: KanbanColumn, width: number, r: Roadmap, sel: string | null, act: BoardActs) => {
+  const { Box, Text, Button } = ui
+  const color = HEADER_COLOR[col.id]
+
+  return (
+    <Box key={`col-${col.id}`} flexDirection="column" width={width}>
+      <Text>
+        {color ? (
+          <Text bold color={color}>
+            {col.title}
           </Text>
-          {(['doing', 'todo', 'blocked'] as const).map(status => {
-            const list = byStatus(status)
-            if (list.length === 0) return undefined
-
-            return (
-              <Box key={`cur-${status}`} flexDirection="column">
-                <Text dimColor>
-                  {ITEM_LABEL[status]} ({list.length})
-                </Text>
-                {list.slice(0, PANE_LIMIT).map(i => (
-                  <Box key={`cur-${i.id}`} paddingLeft={2}>
-                    {itemLine(i)}
-                  </Box>
-                ))}
-                {more(`cur-${status}-more`, list.length - PANE_LIMIT, 2)}
-              </Box>
-            )
-          })}
-          {doneHere.length > 0 ? (
-            <Box key="cur-done" flexDirection="column">
-              <Text dimColor>
-                {doneHere.length > DONE_SHOWN ? `feitos (${doneHere.length}), os últimos ${DONE_SHOWN}` : `feitos (${doneHere.length})`}
-              </Text>
-              {recentDone(r, s.current.phase.id, DONE_SHOWN).map(i => (
-                <Box key={`cur-${i.id}`} paddingLeft={2}>
-                  {itemLine(i, [i.doneAt, i.evidence && cut(i.evidence, 80)].filter(Boolean).join(' · ') || undefined)}
-                </Box>
-              ))}
-            </Box>
+        ) : (
+          <Text bold>{col.title}</Text>
+        )}{' '}
+        <Text dimColor>{String(col.total)}</Text>
+      </Text>
+      {col.cards.length === 0 ? <Text dimColor>—</Text> : undefined}
+      {col.cards.map(card => CardView(ui, card, r, Math.max(6, width - 4), sel, act))}
+      {col.more > 0 || col.isExpanded ? (
+        <Box flexDirection="row" columnGap={2}>
+          {col.more > 0 ? (
+            <Button key={`more-${col.id}`} label={col.more > CARD_STEP ? `+${CARD_STEP} de ${col.more}` : `+${col.more}`} plain dimColor onPress={act.more(col.id)} />
           ) : undefined}
-        </Box>
-      ) : undefined}
-
-      {doneTotal > 0 ? (
-        <Box key="done-elsewhere" marginTop={1}>
-          <Text dimColor>
-            Feitos em outras fases: {doneTotal} ({s.doneElsewhere.map(d => `Fase ${d.phase.id}: ${d.count}`).join(' · ')})
-          </Text>
-        </Box>
-      ) : undefined}
-
-      {s.decisions.length > 0 || s.decisionsElsewhere > 0 ? (
-        <Box key="decisions" flexDirection="column" marginTop={1}>
-          {s.decisions.length > 0 ? <Text bold>Decisões em aberto ({s.decisions.length})</Text> : undefined}
-          {s.decisions.slice(0, PANE_LIMIT).map((d, n) => (
-            <Text key={`dec-${n}`}>
-              • {d.title}
-              {d.phase || d.ref ? <Text dimColor> · {[d.phase && `Fase ${d.phase}`, d.ref].filter(Boolean).join(' · ')}</Text> : ''}
-            </Text>
-          ))}
-          {more('dec-more', s.decisions.length - PANE_LIMIT)}
-          {s.decisionsElsewhere > 0 ? (
-            <Text dimColor>{plural(s.decisionsElsewhere, 'decisão em aberto', 'decisões em aberto')} de outras fases</Text>
-          ) : undefined}
-        </Box>
-      ) : undefined}
-
-      {last ? (
-        <Box key="notice" marginTop={1}>
-          <Text dimColor>{last}</Text>
+          {col.isExpanded ? <Button key={`less-${col.id}`} label="menos" plain dimColor onPress={act.less(col.id)} /> : undefined}
         </Box>
       ) : undefined}
     </Box>
   )
 }
 
-/** O painel quando não há roadmap, ou quando o arquivo tem erro. */
-const EmptyPane = (ui: BasicUi, b: Board | null, act: Acts) => {
+/** O quadro: 4 colunas lado a lado, grade 2x2 ou empilhado (com Feito numa linha só). */
+const BoardView = (ui: Ui, kb: Kanban, r: Roadmap, sel: string | null, act: BoardActs) => {
+  const { Box, Text } = ui
+  const [doing, next, waiting, done] = kb.columns as [KanbanColumn, KanbanColumn, KanbanColumn, KanbanColumn]
+  const col = (c: KanbanColumn) => ColumnView(ui, c, kb.columnWidth, r, sel, act)
+  if (kb.layout === 'row') {
+    return (
+      <Box key="board" flexDirection="row" columnGap={1}>
+        {kb.columns.map(col)}
+      </Box>
+    )
+  }
+  if (kb.layout === 'grid') {
+    return (
+      <Box key="board" flexDirection="column" rowGap={1}>
+        <Box flexDirection="row" columnGap={1}>
+          {col(doing)}
+          {col(next)}
+        </Box>
+        <Box flexDirection="row" columnGap={1}>
+          {col(waiting)}
+          {col(done)}
+        </Box>
+      </Box>
+    )
+  }
+
+  return (
+    <Box key="board" flexDirection="column" rowGap={1}>
+      {col(doing)}
+      {col(next)}
+      {col(waiting)}
+      <Text>
+        <Text bold color="success">
+          ✓ {done.title}
+        </Text>{' '}
+        <Text dimColor>{String(done.total)}</Text>
+      </Text>
+    </Box>
+  )
+}
+
+/** O rodapé: o chip das decisões (abre uma lista curta) e o aviso de desatualizado. */
+const Footer = (ui: Ui, decisions: Decision[], isOpen: boolean, commits: number | undefined, onToggle: () => void) => {
+  const { Box, Text, Button } = ui
+  if (decisions.length === 0 && commits === undefined) return undefined
+
+  return (
+    <Box key="footer" flexDirection="column">
+      <Box flexDirection="row" columnGap={2} flexWrap="wrap" alignItems="center">
+        {decisions.length > 0 ? <Button key="decisions" label={`Decisões ${decisions.length}`} onPress={onToggle} /> : undefined}
+        {commits !== undefined ? <Text color="warning">⚠ {staleChip(commits)}</Text> : undefined}
+      </Box>
+      {isOpen
+        ? decisions.slice(0, DECISIONS_SHOWN).map(d => (
+            <Text dimColor wrap="truncate-end">
+              • {cut(d.title, 70)}
+            </Text>
+          ))
+        : undefined}
+    </Box>
+  )
+}
+
+type PaneState = { kb: Kanban; sel: string | null; isDecisionsOpen: boolean }
+
+/** O cartão do item está à vista no quadro (no empilhado, a coluna Feito é só uma contagem). */
+const isOnBoard = (kb: Kanban, id: string) => kb.columns.some(c => (kb.layout !== 'stack' || c.id !== 'done') && c.cards.some(k => k.id === id))
+
+/**
+ * O painel /roadmap: trilha, fase atual, filtro, quadro e rodapé. Sem listas de texto. O
+ * cartão escolhido abre no lugar; se ele não está à vista, o detalhe vem acima do quadro.
+ */
+const PaneView = (ui: Ui, v: View, width: number, st: PaneState, act: Acts, boardAct: BoardActs, onDecisions: () => void) => {
+  const { Box, Text, Button } = ui
+  const { b, r, s, commits } = v
+  const item = st.sel ? r.items.find(i => i.id === st.sel) : undefined
+  const chip = (key: string, label: string, on: boolean, onPress: () => void) => (
+    <Button key={key} label={label} {...(on ? { variant: 'primary' as const } : { dimColor: true })} onPress={onPress} />
+  )
+
+  return (
+    <Box flexDirection="column" rowGap={1}>
+      <Box flexDirection="row" columnGap={2} justifyContent="space-between">
+        <Text bold>{r.project ?? b.project}</Text>
+        <Button key="roadmap-reload" label="↻" plain onPress={act.reload} />
+      </Box>
+      {Trail(ui, s, width)}
+      {PhaseCard(ui, v, width)}
+      <Box key="filters" flexDirection="row" columnGap={1}>
+        {chip('filter-all', 'Tudo', st.kb.filter === 'all', boardAct.filter('all'))}
+        {chip('filter-mine', `Comigo ${st.kb.mine}`, st.kb.filter === 'mine', boardAct.filter('mine'))}
+      </Box>
+      {item && !isOnBoard(st.kb, item.id) ? Detail(ui, item, r, boardAct, true) : undefined}
+      {BoardView(ui, st.kb, r, item ? item.id : null, boardAct)}
+      {Footer(ui, s.decisions, st.isDecisionsOpen, commits, onDecisions)}
+    </Box>
+  )
+}
+
+/** O painel quando não há roadmap, ou quando o arquivo tem erro: um cartão curto. */
+const EmptyPane = (ui: Ui, b: Board | null, act: Acts) => {
   const { Box, Text, Button } = ui
   const rel = b?.rel ?? where.rel
 
   if (b?.exists) {
     return (
-      <Box flexDirection="column">
+      <Box flexDirection="column" borderStyle="round" borderColor="error" paddingX={1}>
         <Box flexDirection="row" columnGap={2} justifyContent="space-between">
-          <Text bold>{b.project}</Text>
+          <Text bold color="error">
+            ⚠ Roadmap com erro
+          </Text>
           <Button key="roadmap-reload" label="↻" plain onPress={act.reload} />
         </Box>
-        <Text color="error">O roadmap tem erro: {b.error}</Text>
-        <Text dimColor>Corrija {rel}; o mod relê o arquivo sozinho.</Text>
+        <Text>{b.error}</Text>
+        <Text dimColor>{rel}</Text>
       </Box>
     )
   }
 
   return (
-    <Box flexDirection="column">
-      <Text dimColor>Não há roadmap em {rel}.</Text>
-      <Text dimColor>É um JSON com as fases e os itens do projeto (o formato está no README do mod).</Text>
-      <Box marginTop={1}>
-        <Button key="roadmap-create" label="Pedir ao Claude para criar" onPress={act.create} />
+    <Box flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} rowGap={1}>
+      <Text>
+        <Text bold>Sem roadmap</Text>
+        <Text dimColor> · {rel}</Text>
+      </Text>
+      <Box>
+        <Button key="roadmap-create" label="Pedir ao Claude para criar" variant="primary" onPress={act.create} />
       </Box>
     </Box>
   )
@@ -490,7 +684,8 @@ const fill = async ($: EngineInterface, text: string) => {
 
 const CREATE =
   'no formato versão 1 do mod roadmap (a ferramenta roadmap_status mostra o modelo e o que cada campo quer dizer). ' +
-  'Monte as fases e os itens a partir do que já existe no projeto (README, docs, tarefas) e me mostre antes de gravar.'
+  'Monte as fases e os itens a partir do que já existe no projeto (README, docs, tarefas), com um "short" de até 40 caracteres ' +
+  'em cada item de título longo (é o rótulo do cartão no quadro) e de até 18 em cada fase (o nome na trilha), e me mostre antes de gravar.'
 
 /** O que os botões fazem; `withTool` diz se o pedido cita a ferramenta roadmap_update. */
 const acts = ($: EngineInterface, b: Board | null, withTool: boolean): Acts => ({
@@ -507,10 +702,13 @@ const acts = ($: EngineInterface, b: Board | null, withTool: boolean): Acts => (
 const view = async ($: EngineInterface, staleAfter: number): Promise<View | Board | null> => {
   const b = await read($, board)
   if (!b?.exists || !b.roadmap) return b
-  const warning = staleText(await read($, stale), staleAfter)
 
-  return { b, r: b.roadmap, s: summarize(b.roadmap), warning }
+  return { b, r: b.roadmap, s: summarize(b.roadmap), commits: staleCount(await read($, stale), staleAfter) }
 }
+
+/** A tabela de elementos; o Svg só fora do terminal (a tabela do terminal também o traz, mas ele não desenha nada). */
+const uiOf = (table: BasicUi & { Svg?: unknown }, isTerminal: boolean): Ui =>
+  !isTerminal && 'Svg' in table && table.Svg ? (table as Ui) : { Box: table.Box, Text: table.Text, Button: table.Button }
 
 export const register: Register = (on, options) => {
   const file = String(options.file ?? '').trim() || 'docs/roadmap.json'
@@ -541,7 +739,7 @@ export const register: Register = (on, options) => {
     $.clock.after(0, () => void refreshStale($).catch(() => undefined))
 
     try {
-      await $.command.register({ name: 'roadmap', description: 'Mostra o roadmap do projeto: fases, próximas tarefas e o que está com você' })
+      await $.command.register({ name: 'roadmap', description: 'Mostra o roadmap do projeto num quadro: fases, o que está andando, as próximas e o que espera' })
     } catch {
       // Outro plugin já tem esse comando: a faixa e as ferramentas continuam.
     }
@@ -550,9 +748,9 @@ export const register: Register = (on, options) => {
       description:
         'Mostra o roadmap do projeto: a fase atual e o %, as 5 próximas tarefas (com os ids), o que está com o usuário ' +
         'e o que está esperando na fase atual (as outras fases só como contagem), e se o roadmap está desatualizado. ' +
-        'Para achar o id de um item, passe query com palavras do título (até 10 itens, com id, estado, dono, fase e ' +
-        'notas); phase lista uma fase inteira; all: true mostra tudo sem cortes. Sem roadmap no projeto, diz onde ' +
-        'criar e mostra o formato, com cada campo.',
+        'Para achar o id de um item, passe query com palavras do título (até 10 itens, com id, estado, dono, fase, ' +
+        'rótulo curto e notas); phase lista uma fase inteira; all: true mostra tudo sem cortes. Sem roadmap no projeto, ' +
+        'diz onde criar e mostra o formato, com cada campo.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -568,19 +766,21 @@ export const register: Register = (on, options) => {
         description:
           'Muda o estado de um item do roadmap pelo id (o roadmap_status com query acha o id). Use ao começar um item (doing), ' +
           'ao terminar (done, com a evidência: commit, arquivo, teste ou resultado), quando ele travar (blocked, com ' +
-          'waitingOn) ou para reabrir (todo). "done" sem doneAt usa a data de hoje. Com o id de uma fase, muda o estado ' +
-          'da fase (done, doing ou todo) e "evidence" vira o resultado do gate. Use esta ferramenta em vez de editar o JSON à mão.',
+          'waitingOn) ou para reabrir (todo). "done" sem doneAt usa a data de hoje. "short" troca o rótulo curto do cartão ' +
+          'no quadro (até 40 caracteres; "" tira). Com o id de uma fase, muda o estado da fase (done, doing ou todo), o ' +
+          '"short" dela, e "evidence" vira o resultado do gate. Use esta ferramenta em vez de editar o JSON à mão.',
         inputSchema: {
           type: 'object',
           properties: {
             id: { type: 'string', description: 'Id do item (ou da fase)' },
-            status: { type: 'string', enum: ['done', 'doing', 'todo', 'blocked'] },
+            status: { type: 'string', enum: ['done', 'doing', 'todo', 'blocked'], description: 'Sem ele, o estado fica como está' },
             evidence: { type: 'string', description: 'O que prova que está feito: commit, arquivo, teste, print' },
             doneAt: { type: 'string', description: 'Data AAAA-MM-DD; sem ela, "done" usa a de hoje' },
             note: { type: 'string', description: 'Observação que entra nas notas do item' },
             waitingOn: { type: 'string', description: 'Com "blocked": o que o item espera' },
+            short: { type: 'string', description: 'Rótulo curto do cartão (até 40 caracteres; máximo 60); "" tira' },
           },
-          required: ['id', 'status'],
+          required: ['id'],
         },
       })
       await $.tool.register({
@@ -588,12 +788,13 @@ export const register: Register = (on, options) => {
         description:
           'Cria um item no roadmap, numa fase que já existe; o id sai do título. Use quando surgir trabalho novo que faz ' +
           'parte do plano (não para o que vai fazer agora mesmo). "after" põe o item logo depois de outro, no arquivo e ' +
-          'no caminho; sem ele, o item vai para o fim da fase.',
+          'no caminho; sem ele, o item vai para o fim da fase. Com título longo, passe um "short" (o rótulo do cartão).',
         inputSchema: {
           type: 'object',
           properties: {
             phase: { type: 'string', description: 'Id da fase' },
-            title: { type: 'string', description: 'Curto e acionável' },
+            title: { type: 'string', description: 'Acionável' },
+            short: { type: 'string', description: 'Rótulo curto do cartão no quadro (até 40 caracteres; máximo 60)' },
             owner: { type: 'string', description: 'Quem faz: "Claude", o nome do usuário (o owner do roadmap) ou "both"' },
             after: { type: 'string', description: 'Id do item que vem antes deste' },
             status: { type: 'string', enum: ['todo', 'doing', 'blocked', 'done'] },
@@ -662,14 +863,14 @@ export const register: Register = (on, options) => {
     await reload($)
     await $.ui.open({ id: PANE, title: 'Roadmap' })
     const v = await view($, staleAfter)
-    if (v === null || !('s' in v)) return { text: v?.exists ? `O roadmap (${v.rel}) tem erro: ${v.error}` : `Não há roadmap em ${where.rel}.` }
+    if (v === null || !('s' in v)) return { text: v?.exists ? `Roadmap com erro: ${v.error}` : `Sem roadmap em ${where.rel}` }
     const first = v.s.next[0]
 
     return {
       text: [
-        `Roadmap: ${v.s.current ? `${phaseLabel(v.s.current.phase)} · ${v.s.current.pct}%` : 'sem fases'}`,
-        first ? `próxima: ${first.title} (${first.id})` : 'nada livre agora',
-        v.warning,
+        v.s.current ? `Fase ${v.s.current.phase.id} · ${v.s.current.pct}%` : 'Roadmap sem fases',
+        first ? `próxima: ${itemLabel(first)}` : 'nada livre agora',
+        v.commits !== undefined ? `⚠ ${staleChip(v.commits)}` : undefined,
       ]
         .filter(Boolean)
         .join(' · '),
@@ -678,55 +879,57 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const v = await view($, staleAfter)
-    const last = await read($, notice)
     const b = v !== null && 's' in v ? v.b : v
     const act = acts($, b, claudeCanEdit)
-    if (e.surface === 'terminal') {
-      const ui = $.ui.resolve(e)
-      const bar: Bar = (pct, tone, key) => (
-        <ui.Text key={key} color={THEME[tone]}>
-          {textBar(pct, 12)}
-        </ui.Text>
-      )
-      return v !== null && 's' in v ? Pane(ui, v, bar, act, last) : EmptyPane(ui, b, act)
+    const ui = uiOf($.ui.resolve(e), e.surface === 'terminal')
+    if (v === null || !('s' in v)) return EmptyPane(ui, b, act)
+    const width = e.props.bodyColumns
+    const opened = await read($, expanded)
+    const st: PaneState = {
+      kb: kanban(v.r, {
+        filter: await read($, filtering),
+        // Um estado antigo (lista de colunas) vale como nada aberto.
+        expanded: opened && !Array.isArray(opened) ? opened : {},
+        width,
+        seen: await read($, doneSeen),
+      }),
+      sel: await read($, selected),
+      isDecisionsOpen: await read($, decisionsOpen),
     }
-    const ui = $.ui.resolve(e)
-    const width = Math.max(60, Math.min(160, e.props.bodyColumns * 2))
-    const bar: Bar = (pct, tone, key) => (
-      <ui.Svg key={key} source={barSvg(pct, width, COLOR[tone])} alt={`${pct}% feito`} width={width} height={8} />
-    )
+    const steps = (column: ColumnId, by: number | null) => () =>
+      void update($, expanded, cur => {
+        const map = cur && !Array.isArray(cur) ? cur : {}
+        return { ...map, [column]: by === null ? 0 : (map[column] ?? 0) + by }
+      }).catch(() => undefined)
+    const boardAct: BoardActs = {
+      select: id => () => void update($, selected, cur => (cur === id ? null : id)).catch(() => undefined),
+      more: column => steps(column, 1),
+      less: column => steps(column, null),
+      filter: to => () => void update($, filtering, () => to).catch(() => undefined),
+      start: act.start,
+      close: () => void update($, selected, () => null).catch(() => undefined),
+    }
+    const toggleDecisions = () => void update($, decisionsOpen, open => !open).catch(() => undefined)
 
-    return v !== null && 's' in v ? Pane(ui, v, bar, act, last) : EmptyPane(ui, b, act)
+    return PaneView(ui, v, width, st, act, boardAct, toggleDecisions)
   })
 
-  // Acima do prompt: a fase, o % e a próxima, empilhado com o que outros plugins desenham.
+  // Acima do prompt: uma linha com a fase, o %, a próxima e os botões, empilhada com o que outros plugins desenham.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)
     if (!showBand || e.props.hasSurvey) return below
-    if (e.surface !== 'terminal' && e.surface !== 'desktop') return below
     const v = await view($, staleAfter)
     if (v === null || (!('s' in v) && !v.exists)) return below
     const b = 's' in v ? v.b : v
     if ((await read($, hidden)) === b.sig) return below
     const act = acts($, b, claudeCanEdit)
-    if (e.surface === 'terminal') {
-      const ui = $.ui.resolve(e)
-
-      return (
-        <ui.Box flexDirection="column">
-          {'s' in v ? Band(ui, v, undefined, act) : ErrorBand(ui, b, act)}
-          {below}
-        </ui.Box>
-      )
-    }
-    const ui = $.ui.resolve(e)
-    const bar: Bar = (pct, tone, key) => (
-      <ui.Svg key={key} source={barSvg(pct, 72, COLOR[tone])} alt={`${pct}% da fase feito`} width={72} height={8} />
-    )
+    const ui = uiOf($.ui.resolve(e), e.surface === 'terminal')
+    const isTerminal = e.surface === 'terminal'
+    const width = e.props.bodyColumns
 
     return (
       <ui.Box flexDirection="column">
-        {'s' in v ? Band(ui, v, bar, act) : ErrorBand(ui, b, act)}
+        {'s' in v ? Band(ui, v, width, act, isTerminal) : ErrorBand(ui, b, width, act, isTerminal)}
         {below}
       </ui.Box>
     )

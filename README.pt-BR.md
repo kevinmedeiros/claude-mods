@@ -7,7 +7,7 @@
 [![Licença: MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-blue.svg)](LICENSE)
 [![Plugins do Claude Code](https://img.shields.io/badge/Claude%20Code-plugins-d97757)](https://code.claude.com/docs)
 ![Mods](https://img.shields.io/badge/mods-6-informational)
-![Testes](https://img.shields.io/badge/testes-77%20passando-brightgreen)
+![Testes](https://img.shields.io/badge/testes-88%20passando-brightgreen)
 
 [English](README.md) · [Português](README.pt-BR.md)
 
@@ -24,7 +24,7 @@ Mods do Claude Code são plugins de **function hooks**: TypeScript que roda dent
 | [**usage-limits**](#usage-limits) | Os limites de 5h e semanal com **quanto tempo duram** no ritmo atual, tokens e custo de todas as sessões abertas, gasto por projeto, acompanhamento dos créditos de API e uma recomendação de modelo para você não ficar sem uso antes do reset. |
 | [**fluxo**](#fluxo) | `/handoff` grava onde você parou para a próxima sessão, em outra máquina, continuar de lá; e som e notificação quando um turno longo termina. |
 | [**tarefas**](#tarefas) | As tarefas do projeto num `TASKS.md` simples: painel, a próxima tarefa acima do prompt com os botões *Começar* e *Feita*, e o Claude criando e concluindo tarefas enquanto trabalha. |
-| [**roadmap**](#roadmap) | Em que ponto o projeto está no roadmap: a fase atual e o progresso acima do prompt com o botão *Fazer a próxima*, o que você pode fazer agora, um aviso quando os commits passam à frente do roadmap, e o Claude marcando o que terminou com a evidência. |
+| [**roadmap**](#roadmap) | Em que ponto o projeto está no roadmap: as fases numa trilha e o trabalho num quadro kanban, uma linha acima do prompt com a fase, o % e o botão *Fazer*, um aviso quando os commits passam à frente do roadmap, e o Claude marcando o que terminou com a evidência. |
 | [**unity-tools**](#unity-tools) | Erros de compilação entregues ao Claude segundos depois de ele editar um `.cs`, testes EditMode/PlayMode que ele pode rodar sozinho, painel de build do servidor dedicado e guardas que o mantêm longe de `Library/`, cenas e `.meta`. |
 | [**blender-preview**](#blender-preview) | Miniatura da cena do Blender com orçamento de triângulos, ossos e texturas, e conferência de cada `.glb` que o Claude exporta. |
 
@@ -121,8 +121,8 @@ A lista do que falta no projeto, num `TASKS.md` na raiz (o mesmo formato da skil
 
 Em que ponto o projeto está no roadmap, num `docs/roadmap.json` que o Claude atualiza enquanto trabalha.
 
-- **Acima do prompt:** *"Roadmap · Fase 2 Beta fechado · 16% · Próxima: Login por e-mail (Claude) · 1 com você agora"* com **Fazer a próxima** (escreve o pedido para você), **Ver roadmap** e **Ocultar**.
-- **`/roadmap`** abre o painel: cada fase com o % e a barra, as cinco próximas tarefas com quem faz e o botão **Pedir ao Claude**, o que está com você agora e depois, o que está esperando e o quê, e os itens da fase atual por estado, seis por lista, com as outras fases só na contagem.
+- **Acima do prompt:** uma linha, *"Fase 2 ▰▰▱▱▱▱▱▱▱▱ 16%  › Login por e-mail (Claude)  comigo: 3"*, com **Fazer** (escreve o pedido para você), **Roadmap** e **Ocultar**. Numa janela estreita, os extras saem antes de o nome da tarefa ser cortado.
+- **`/roadmap`** abre o painel: as fases numa trilha, o cartão da fase atual (barra, %, contagens e gate) e um quadro kanban com *Agora*, *Próximas*, *Esperando* e *Feito*, até quatro cartões por coluna e um *+8 de N* para ver mais, com o filtro *Comigo*. O cartão abre no lugar, com o detalhe e o botão **Fazer agora** (**Ver o que falta** quando ele está bloqueado ou espera outra tarefa). Itens e fases podem ter um rótulo curto (`short`).
 - **Aviso de desatualizado.** Quando o projeto passa de 10 commits sem mexer no roadmap, a faixa e o painel avisam.
 - **O Claude mantém o roadmap em dia.** Ele ganha as ferramentas `roadmap_status`, `roadmap_update` e `roadmap_add`: marca o que terminou com a evidência (um commit, um teste, um arquivo) e cria os itens que surgirem, sempre com aviso na tela. O `roadmap_status` acha o id de qualquer item por palavras do título, e depois de cada `git commit` o Claude é lembrado de marcar o que o commit terminou. Desligue as ferramentas de escrita em `claudeCanEdit`.
 - **Linha de status** com a fase e o %.

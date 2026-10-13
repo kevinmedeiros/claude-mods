@@ -25,7 +25,7 @@
     {
       "name": "roadmap",
       "source": "./plugins/roadmap",
-      "description": "Project roadmap in a JSON: phase and progress above the prompt, next tasks, what you can do now, an out-of-date warning, and Claude checking items off"
+      "description": "Project roadmap in a JSON: the phases as a trail and the work as a kanban board, phase and progress above the prompt, an out-of-date warning, and Claude checking items off"
     },
     {
       "name": "unity-tools",

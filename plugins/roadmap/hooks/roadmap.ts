@@ -1,29 +1,55 @@
-import type { Decision, Item, ItemStatus, Phase, PhaseStatus, PhaseView, Roadmap, Summary } from '../types'
+import type {
+  Card,
+  ColumnId,
+  Counts,
+  Decision,
+  Filter,
+  Item,
+  ItemStatus,
+  Kanban,
+  KanbanColumn,
+  Layout,
+  OwnerKind,
+  Phase,
+  PhaseStatus,
+  PhaseView,
+  Roadmap,
+  Summary,
+} from '../types'
 
 /**
  * O roadmap do projeto num JSON (formato versão 1, descrito no README do mod):
  *   { "version": 1, "project", "goal", "updated", "owner",
- *     "phases": [{ "id", "name", "status", ... }],
- *     "items": [{ "id", "phase", "title", "status", "owner", "dependsOn", ... }],
+ *     "phases": [{ "id", "name", "short", "status", ... }],
+ *     "items": [{ "id", "phase", "title", "short", "status", "owner", "dependsOn", ... }],
  *     "path": ["id", ...], "openDecisions": [{ "title", ... }] }
- * Aqui fica só lógica pura: ler e conferir, calcular o que mostrar e gravar mudanças.
+ * Aqui fica só lógica pura: ler e conferir, montar o quadro (colunas, cartões,
+ * rótulos, layout e os desenhos) e gravar mudanças.
  */
 
 export const ITEM_STATUSES: readonly ItemStatus[] = ['done', 'doing', 'todo', 'blocked']
 export const PHASE_STATUSES: readonly PhaseStatus[] = ['done', 'doing', 'todo']
 export const NEXT_LIMIT = 5
-/** Itens por lista no painel; o resto vira "e mais N". */
-export const PANE_LIMIT = 6
-/** Feitos da fase atual que o painel lista (os outros entram só na contagem). */
-export const DONE_SHOWN = 3
 /** Itens por lista no texto do roadmap_status, sem "all". */
 export const TEXT_LIMIT = 8
 /** Resultados de uma busca do roadmap_status. */
 export const QUERY_LIMIT = 10
-/** O título da próxima tarefa na faixa acima do prompt. */
-export const BAND_TITLE_MAX = 55
 /** As notas do item no pedido de "Fazer a próxima". */
 const NOTES_MAX = 200
+/** O "short" mais longo que o arquivo aceita. */
+export const SHORT_MAX = 60
+/** Sem "short", o rótulo do item é o título cortado aqui. */
+export const LABEL_MAX = 40
+/** Sem "short", o rótulo da fase é o nome cortado aqui. */
+export const PHASE_LABEL_MAX = 18
+/** Cartões por coluna do quadro, antes do "+N". */
+export const CARD_LIMIT = 4
+/** Cartões da coluna Feito, antes do "+N". */
+export const DONE_LIMIT = 3
+/** Quantos cartões cada clique no "+N" abre a mais. */
+export const CARD_STEP = 8
+/** Decisões que o rodapé do painel lista. */
+export const DECISIONS_SHOWN = 5
 
 export const ITEM_LABEL: Record<ItemStatus, string> = {
   done: 'feito',
@@ -36,8 +62,8 @@ export const ITEM_MARK: Record<ItemStatus, string> = { done: '✓', doing: '▶'
 
 /** A ordem em que o mod escreve as chaves que ele mesmo cria; as que já existem ficam onde estão. */
 const ROOT_KEYS = ['version', 'project', 'goal', 'updated', 'owner', 'phases', 'items', 'path', 'openDecisions']
-const PHASE_KEYS = ['id', 'name', 'goal', 'status', 'gate', 'gateStatus', 'notes']
-const ITEM_KEYS = ['id', 'phase', 'title', 'status', 'owner', 'waitingOn', 'dependsOn', 'doneAt', 'evidence', 'area', 'gate', 'notes']
+const PHASE_KEYS = ['id', 'name', 'short', 'goal', 'status', 'gate', 'gateStatus', 'notes']
+const ITEM_KEYS = ['id', 'phase', 'title', 'short', 'status', 'owner', 'waitingOn', 'dependsOn', 'doneAt', 'evidence', 'area', 'gate', 'notes']
 
 // ---------- JSON: onde está cada valor e onde está o erro ----------
 
@@ -266,6 +292,18 @@ const idOf = (v: unknown): string | undefined =>
 
 const quote = (v: unknown) => JSON.stringify(v) ?? String(v)
 
+/**
+ * O que há de errado com um "short" (undefined: está bom ou não existe). `ideal` é o
+ * tamanho que cabe sem corte: 40 no cartão de um item, 18 na trilha das fases.
+ */
+export const shortProblem = (v: unknown, ideal = LABEL_MAX): string | undefined => {
+  if (v === undefined) return undefined
+  if (typeof v !== 'string') return '"short" precisa ser um texto'
+  if (!v.trim()) return '"short" está vazio (tire o campo ou escreva um rótulo curto)'
+  const n = Array.from(v.trim()).length
+  return n > SHORT_MAX ? `"short" tem ${n} caracteres; o máximo é ${SHORT_MAX} (o ideal é até ${ideal})` : undefined
+}
+
 /** Lê o texto do arquivo e confere o formato; o erro vem com a linha e o motivo. */
 export const parseRoadmap = (raw: string): Parsed => {
   const text = stripBom(raw)
@@ -322,9 +360,12 @@ const check = (doc: unknown, lineAt: (path: string) => number): Parsed => {
     for (const key of ['name', 'goal', 'gate', 'gateStatus', 'notes']) {
       if (p[key] !== undefined && typeof p[key] !== 'string') return bad(`${at}/${key}`, `fase "${id}": "${key}" precisa ser um texto`)
     }
+    const badShort = shortProblem(p.short, PHASE_LABEL_MAX)
+    if (badShort) return bad(`${at}/short`, `fase "${id}": ${badShort}`)
     phases.push({
       id,
       name: typeof p.name === 'string' ? p.name.trim() : '',
+      short: typeof p.short === 'string' ? p.short.trim() : undefined,
       goal: text(p.goal),
       status: status as PhaseStatus,
       gate: text(p.gate),
@@ -351,6 +392,8 @@ const check = (doc: unknown, lineAt: (path: string) => number): Parsed => {
     for (const key of ['owner', 'waitingOn', 'doneAt', 'evidence', 'area', 'notes']) {
       if (it[key] !== undefined && typeof it[key] !== 'string') return bad(`${at}/${key}`, `item "${id}": "${key}" precisa ser um texto`)
     }
+    const itemShort = shortProblem(it.short)
+    if (itemShort) return bad(`${at}/short`, `item "${id}": ${itemShort}`)
     if (it.gate !== undefined && typeof it.gate !== 'boolean') return bad(`${at}/gate`, `item "${id}": "gate" precisa ser true ou false`)
     if (it.dependsOn !== undefined && !Array.isArray(it.dependsOn)) {
       return bad(`${at}/dependsOn`, `item "${id}": "dependsOn" precisa ser uma lista de ids`)
@@ -365,6 +408,7 @@ const check = (doc: unknown, lineAt: (path: string) => number): Parsed => {
       id,
       phase,
       title: it.title.trim(),
+      short: typeof it.short === 'string' ? it.short.trim() : undefined,
       status: status as ItemStatus,
       owner: text(it.owner)?.trim(),
       waitingOn: text(it.waitingOn),
@@ -432,6 +476,20 @@ export const cut = (text: string, max: number) => {
   return chars.length <= max ? text : `${chars.slice(0, max - 1).join('').trimEnd()}…`
 }
 
+/**
+ * Como o cut, mas, quando o corte cai no meio de uma palavra, volta ao espaço anterior,
+ * se isso não perde mais da metade: "desenvolvedor na…" em vez de "desenvolvedor na lo…".
+ */
+const cutAtWord = (text: string, max: number) => {
+  const chars = Array.from(text)
+  if (chars.length <= max) return text
+  const head = chars.slice(0, max - 1)
+  const space = head.lastIndexOf(' ')
+  const isMidWord = chars[max - 1] !== ' ' && head.at(-1) !== ' '
+
+  return `${(isMidWord && space >= Math.ceil(max / 2) ? head.slice(0, space) : head).join('').trimEnd()}…`
+}
+
 /** O item é do usuário: o "owner" do item é o "owner" do arquivo, ou "both". */
 export const isMine = (item: Item, r: Roadmap) => {
   const who = lower(item.owner)
@@ -469,13 +527,38 @@ export const phaseViews = (r: Roadmap): PhaseView[] => {
   })
 }
 
-/** O caminho: primeiro a ordem de "path", depois a ordem do arquivo. */
+/**
+ * A posição de cada item no caminho. Os que estão fora de "path" entram logo depois do
+ * último passo da mesma fase (sem passo na fase, antes do primeiro passo de uma fase
+ * seguinte; sem isso, no fim), entre si na ordem do arquivo.
+ */
+const pathRank = (r: Roadmap) => {
+  const step = new Map<string, number>(r.path.map((id, n): [string, number] => [id, n]))
+  const phaseOf = new Map(r.items.map(i => [i.id, i.phase]))
+  const order = new Map(r.phases.map((p, n) => [p.id, n]))
+  const lastOf = new Map<string, number>()
+  r.path.forEach((id, n) => lastOf.set(phaseOf.get(id) ?? '', n))
+
+  return (item: Item, n: number) => {
+    const at = step.get(item.id)
+    if (at !== undefined) return at
+    const tie = n / (r.items.length + 1) / 4
+    const last = lastOf.get(item.phase)
+    if (last !== undefined) return last + 0.25 + tie
+    const mine = order.get(item.phase) ?? Number.POSITIVE_INFINITY
+    const later = r.path.findIndex(id => (order.get(phaseOf.get(id) ?? '') ?? -1) > mine)
+
+    return later >= 0 ? later - 0.5 + tie : r.path.length + n
+  }
+}
+
+/** O caminho: a ordem de "path", com os itens de fora junto da sua fase. */
 export const nextItems = (r: Roadmap, limit = NEXT_LIMIT): Item[] => {
   const done = new Set(r.items.filter(i => i.status === 'done').map(i => i.id))
-  const rank = new Map<string, number>(r.path.map((id, n): [string, number] => [id, n]))
+  const rank = pathRank(r)
 
   return r.items
-    .map((item, n) => ({ item, key: rank.get(item.id) ?? r.path.length + n }))
+    .map((item, n) => ({ item, key: rank(item, n) }))
     .filter(({ item }) => item.status !== 'done' && item.status !== 'blocked' && item.dependsOn.every(d => done.has(d)))
     .sort((a, b) => a.key - b.key)
     .slice(0, limit)
@@ -508,14 +591,593 @@ export const summarize = (r: Roadmap): Summary => {
   }
 }
 
-/** Os últimos feitos de uma fase: pela data, e sem data pela ordem do arquivo, do fim para o começo. */
-export const recentDone = (r: Roadmap, phase: string, limit: number): Item[] =>
+/**
+ * Os últimos feitos de uma fase: pela data; no mesmo dia, o que o mod viu virar feito
+ * por último (`seen`: id → quando viu); depois, a ordem do arquivo, do fim para o começo.
+ */
+export const recentDone = (r: Roadmap, phase: string, limit: number, seen: Readonly<Record<string, number>> = {}): Item[] =>
   r.items
-    .map((item, n) => ({ item, n }))
+    .map((item, n) => ({ item, n, at: seen[item.id] ?? -1 }))
     .filter(({ item }) => item.phase === phase && item.status === 'done')
-    .sort((a, b) => (b.item.doneAt ?? '').localeCompare(a.item.doneAt ?? '') || b.n - a.n)
+    .sort((a, b) => (b.item.doneAt ?? '').localeCompare(a.item.doneAt ?? '') || b.at - a.at || b.n - a.n)
     .slice(0, limit)
     .map(x => x.item)
+
+/** Os itens que viraram feitos de um roadmap para o outro (os novos já feitos também). */
+export const newlyDone = (before: Roadmap, after: Roadmap): string[] => {
+  const was = new Map(before.items.map(i => [i.id, i.status]))
+
+  return after.items.filter(i => i.status === 'done' && was.get(i.id) !== 'done').map(i => i.id)
+}
+
+// ---------- o quadro: rótulos, colunas, cartões e layout ----------
+
+/** O rótulo curto do item: o "short", ou o título cortado em 40 (no fim de uma palavra, quando dá). */
+export const itemLabel = (i: Item) => i.short ?? cutAtWord(i.title, LABEL_MAX)
+
+/** O rótulo curto da fase: o "short", ou o nome cortado em 18, no fim de uma palavra quando dá (vazio sem nome). */
+export const phaseShort = (p: Phase) => p.short ?? cutAtWord(p.name, PHASE_LABEL_MAX)
+
+/** "Fase 2 · Beta fechado", ou "Fase 2" sem nome. */
+export const phaseTitle = (p: Phase) => `Fase ${p.id}${phaseShort(p) ? ` · ${phaseShort(p)}` : ''}`
+
+export const COLUMN_TITLE: Record<ColumnId, string> = { doing: 'Agora', next: 'Próximas', waiting: 'Esperando', done: 'Feito' }
+export const COLUMN_IDS: readonly ColumnId[] = ['doing', 'next', 'waiting', 'done']
+export const OWNER_CHIP: Record<Exclude<OwnerKind, 'other'>, string> = { me: 'você', claude: 'Claude', both: 'os dois' }
+
+/** Quem faz, em uma palavra: o usuário, o Claude, os dois ou outra pessoa. */
+export const ownerKind = (item: Item, r: Roadmap): OwnerKind | undefined => {
+  const who = lower(item.owner)
+  if (!who) return undefined
+  if (who === 'both') return 'both'
+  if (who === lower(r.owner)) return 'me'
+  if (who === 'claude') return 'claude'
+
+  return 'other'
+}
+
+/** O chip do dono no cartão e na faixa: "você", "Claude", "os dois" ou o nome cortado. */
+export const ownerChip = (item: Item, r: Roadmap): string | undefined => {
+  const kind = ownerKind(item, r)
+  if (!kind) return undefined
+
+  return kind === 'other' ? cut(item.owner ?? '', 12) : OWNER_CHIP[kind]
+}
+
+/** O layout do quadro pela largura: 4 colunas, grade 2x2 ou empilhado. */
+export const layoutFor = (width: number): Layout => (width >= 96 ? 'row' : width >= 60 ? 'grid' : 'stack')
+
+/** A largura de cada coluna, em células, com uma de folga entre colunas. */
+export const columnWidth = (layout: Layout, width: number) =>
+  layout === 'row' ? Math.floor((width - 3) / 4) : layout === 'grid' ? Math.floor((width - 1) / 2) : width
+
+/** Feitos, em andamento, bloqueados e a fazer de uma fase. */
+export const phaseCounts = (r: Roadmap, phase: string | undefined): Counts => {
+  const items = r.items.filter(i => i.phase === phase)
+  const count = (s: ItemStatus) => items.filter(i => i.status === s).length
+
+  return { done: count('done'), doing: count('doing'), blocked: count('blocked'), todo: count('todo'), total: items.length }
+}
+
+/** Não feito e ainda sem poder começar: bloqueado, ou a fazer com uma dependência aberta. */
+export const isStuck = (item: Item, r: Roadmap) =>
+  item.status === 'blocked' || (item.status === 'todo' && pendingDeps(item, r).length > 0)
+
+const cardOf = (item: Item, r: Roadmap, current: string | undefined): Card => {
+  const deps = pendingDeps(item, r)
+  const wait: Pick<Card, 'wait' | 'waitKind'> =
+    item.status === 'blocked'
+      ? { wait: item.waitingOn ?? (deps[0] ? itemLabel(deps[0]) : undefined), waitKind: 'blocked' }
+      : item.status === 'todo' && deps[0]
+        ? { wait: itemLabel(deps[0]), waitKind: 'dep' }
+        : {}
+
+  return {
+    id: item.id,
+    label: itemLabel(item),
+    status: item.status,
+    owner: ownerKind(item, r),
+    ownerText: ownerChip(item, r),
+    gate: item.gate,
+    ...wait,
+    phase: item.phase,
+    isOtherPhase: item.phase !== current,
+  }
+}
+
+/** O id da fase atual. */
+export const currentPhase = (r: Roadmap) => phaseViews(r).find(v => v.isCurrent)?.phase.id
+
+/**
+ * Os itens de cada coluna, sem filtro nem corte. Agora: os em andamento, os da fase
+ * atual primeiro. Próximas: os a fazer livres, na ordem do caminho, de qualquer fase.
+ * Esperando: da fase atual, os bloqueados e depois os que esperam outra tarefa.
+ * Feito: os feitos da fase atual, os últimos primeiro.
+ */
+export const boardLists = (r: Roadmap, seen: Readonly<Record<string, number>> = {}): Record<ColumnId, Item[]> => {
+  const current = currentPhase(r)
+  const order = new Map(r.phases.map((p, n) => [p.id, n]))
+  const here = (i: Item) => i.phase === current
+  const doing = r.items.filter(i => i.status === 'doing')
+
+  return {
+    doing: [...doing.filter(here), ...doing.filter(i => !here(i)).sort((a, b) => (order.get(a.phase) ?? 0) - (order.get(b.phase) ?? 0))],
+    next: nextItems(r, Number.POSITIVE_INFINITY).filter(i => i.status === 'todo'),
+    waiting: [
+      ...r.items.filter(i => here(i) && i.status === 'blocked'),
+      ...r.items.filter(i => here(i) && i.status === 'todo' && pendingDeps(i, r).length > 0),
+    ],
+    done: recentDone(r, current ?? '', Number.POSITIVE_INFINITY, seen),
+  }
+}
+
+/** Quantos itens do quadro (Agora, Próximas e Esperando) são do usuário: o "Comigo" do painel e da faixa. */
+export const mineCount = (r: Roadmap) => {
+  const lists = boardLists(r)
+
+  return (['doing', 'next', 'waiting'] as const).reduce((n, c) => n + lists[c].filter(i => isMine(i, r)).length, 0)
+}
+
+export type KanbanInput = {
+  filter?: Filter
+  /** Quantas vezes o "+N" de cada coluna foi apertado. */
+  expanded?: Readonly<Partial<Record<ColumnId, number>>>
+  width: number
+  /** Quando o mod viu cada item virar feito (a ordem da coluna Feito no mesmo dia). */
+  seen?: Readonly<Record<string, number>>
+}
+
+/**
+ * O quadro: as 4 colunas de boardLists, com o filtro. Até 4 cartões por coluna
+ * (Feito, 3); cada "+N" abre mais 8, e "menos" volta ao começo.
+ */
+export const kanban = (r: Roadmap, input: KanbanInput): Kanban => {
+  const current = currentPhase(r)
+  const filter = input.filter ?? 'all'
+  const keep = (i: Item) => filter === 'all' || isMine(i, r)
+  const lists = boardLists(r, input.seen)
+  const layout = layoutFor(input.width)
+  const columns = COLUMN_IDS.map((id): KanbanColumn => {
+    const list = lists[id].filter(keep)
+    const base = id === 'done' ? DONE_LIMIT : CARD_LIMIT
+    const steps = Math.max(0, Math.floor(Number(input.expanded?.[id] ?? 0)) || 0)
+    const shown = list.slice(0, base + steps * CARD_STEP)
+
+    return {
+      id,
+      title: COLUMN_TITLE[id],
+      total: list.length,
+      cards: shown.map(i => cardOf(i, r, current)),
+      more: list.length - shown.length,
+      isExpanded: steps > 0 && list.length > base,
+    }
+  })
+
+  return { filter, mine: mineCount(r), layout, columnWidth: columnWidth(layout, input.width), columns }
+}
+
+const size = (s: string | undefined) => (s ? Array.from(s).length : 0)
+
+/** Uma linha de texto quebrado; `hard`: a linha acaba no meio de uma palavra comprida demais. */
+type Line = { text: string; hard: boolean }
+
+/** O texto quebrado por palavra em linhas de `width` células, como o terminal quebra (palavra maior que a linha é partida). */
+export const wrapWords = (text: string, width: number): Line[] => {
+  const w = Math.max(1, width)
+  const lines: Line[] = []
+  let line = ''
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (line && size(line) + 1 + size(word) <= w) {
+      line += ` ${word}`
+      continue
+    }
+    if (line) lines.push({ text: line, hard: false })
+    let rest = Array.from(word)
+    while (rest.length > w) {
+      lines.push({ text: rest.slice(0, w).join(''), hard: true })
+      rest = rest.slice(w)
+    }
+    line = rest.join('')
+  }
+  if (line || lines.length === 0) lines.push({ text: line, hard: false })
+
+  return lines
+}
+
+/** Como o wrapWords, mas sem partir palavra: a palavra maior que a linha é cortada com "…" e o texto para ali. */
+const wrapWhole = (text: string, w: number): Line[] => {
+  const lines: Line[] = []
+  let line = ''
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    if (line && size(line) + 1 + size(word) <= w) {
+      line += ` ${word}`
+      continue
+    }
+    if (line) lines.push({ text: line, hard: false })
+    if (size(word) > w) return [...lines, { text: cut(word, w), hard: false }]
+    line = word
+  }
+  if (line || lines.length === 0) lines.push({ text: line, hard: false })
+
+  return lines
+}
+
+/**
+ * O texto em até `lines` linhas de `width` células; a última leva o resto do texto, cortado
+ * com "…". `isWhole`: sem partir palavra (a palavra que não cabe na linha é cortada com "…").
+ */
+export const wrapFit = (text: string, width: number, lines: number, isWhole = false): string[] => {
+  const w = Math.max(1, width)
+  const all = isWhole ? wrapWhole(text, w) : wrapWords(text, w)
+  if (all.length <= lines) return all.map(l => l.text)
+  const rest = all
+    .slice(lines - 1)
+    .map((l, k) => (k === 0 || all[lines - 2 + k]!.hard ? l.text : ` ${l.text}`))
+    .join('')
+
+  return [...all.slice(0, lines - 1).map(l => l.text), cutAtWord(rest, w)]
+}
+
+/**
+ * O rótulo do cartão cabendo em `lines` linhas de `width` células, quebrado por palavra
+ * como o terminal quebra; o que não cabe vira "…" no fim da última linha.
+ */
+export const cardLabel = (label: string, width: number, lines = 2) => {
+  const all = wrapWords(label, width)
+  if (all.length <= lines) return label
+
+  return wrapFit(label, width, lines)
+    .map((t, k) => (k === 0 ? t : `${all[k - 1]!.hard ? '' : ' '}${t}`))
+    .join('')
+}
+
+/**
+ * As células de uma barra segmentada (feito, andamento, esperando, resto), pelo
+ * maior resto, somando `width`.
+ */
+export const splitBar = (c: Counts, width: number) => {
+  if (c.total === 0) return { done: 0, doing: 0, blocked: 0, rest: width }
+  const parts = (['done', 'doing', 'blocked'] as const).map(k => ({ k, exact: (c[k] / c.total) * width }))
+  const out = { done: 0, doing: 0, blocked: 0, rest: 0 }
+  for (const p of parts) out[p.k] = Math.floor(p.exact)
+  let left = Math.round(((c.done + c.doing + c.blocked) / c.total) * width) - (out.done + out.doing + out.blocked)
+  for (const p of [...parts].sort((a, b) => b.exact - Math.floor(b.exact) - (a.exact - Math.floor(a.exact)))) {
+    if (left <= 0) break
+    if (p.exact > 0) {
+      out[p.k]++
+      left--
+    }
+  }
+  out.rest = width - out.done - out.doing - out.blocked
+
+  return out
+}
+
+/** A linha de contagens do cartão da fase: "49 ✓  3 ▶  12 ‖  49 ○". */
+export const countsText = (c: Counts) => `${c.done} ✓  ${c.doing} ▶  ${c.blocked} ‖  ${c.todo} ○`
+
+/** O chip do gate no cartão da fase: "Gate 2 · não rodado" (o gateStatus até a primeira pontuação, em até 16). */
+export const gateChip = (p: Phase, isNarrow = false): string | undefined => {
+  if (!p.gate) return undefined
+  const head = `Gate ${p.id}`
+  const first = (p.gateStatus ?? '').split(/[.,;:(]/)[0]?.trim() ?? ''
+
+  return isNarrow || !first ? head : `${head} · ${cut(first, 16)}`
+}
+
+// ---------- a trilha das fases ----------
+
+/** O estado de uma fase na trilha: feita, a atual, em andamento (sem ser a atual) ou a fazer. */
+export type NodeState = 'done' | 'current' | 'doing' | 'todo'
+
+export const nodeState = (v: PhaseView): NodeState =>
+  v.isCurrent ? 'current' : v.phase.status === 'done' ? 'done' : v.phase.status === 'doing' ? 'doing' : 'todo'
+
+const NODE_GLYPH: Record<NodeState, string> = { done: '●', current: '◉', doing: '◐', todo: '○' }
+
+/** Um pedaço de texto com o tom que o desenho dá a ele. */
+export type Seg = { text: string; tone: 'done' | 'current' | 'doing' | 'todo' | 'dim' }
+
+/** O nome da fase na trilha: o rótulo curto (ou o nome cortado em 18); sem nome, o id. */
+const trailName = (p: Phase) => phaseShort(p) || p.id
+
+/** Id curto (até 3 caracteres, como "2" ou "10"): vai na frente do nome quando cabe; "pos-beta", não. */
+const isShortId = (p: Phase) => size(p.id) <= 3
+
+/** A menor largura de slot (com 1 de folga) em que o texto cabe em `lines` linhas sem corte nem palavra partida. */
+const slotFor = (text: string, lines: number) => {
+  const n = size(text)
+  const longest = Math.max(1, ...text.split(/\s+/).filter(Boolean).map(size))
+  for (let w = longest; w < n; w++) if (wrapWords(text, w).length <= lines) return w + 1
+
+  return n + 1
+}
+
+/** Abaixo disto por fase, a trilha mostra uma janela em volta da fase atual. */
+const TRAIL_MIN = 8
+
+/**
+ * A trilha das fases para o terminal: uma linha de nós (● feita, ◉ atual com o %,
+ * ◐ em andamento, ○ a fazer) ligados por ━, e embaixo o nome de cada fase, em até duas
+ * linhas. Do mais rico ao mais curto: "id nome" numa linha, só o nome numa linha, o
+ * nome em duas linhas; se nem assim cabe, a fase atual fica com o nome inteiro e as
+ * outras dividem o resto. Com fases demais, uma janela em volta da atual, com "…".
+ */
+export const trailText = (views: readonly PhaseView[], width: number): { nodes: Seg[]; labels: Seg[][] } => {
+  const n = views.length
+  if (n === 0) return { nodes: [], labels: [] }
+  const cur = Math.max(0, views.findIndex(v => v.isCurrent))
+  let start = 0
+  let end = n
+  if (n * TRAIL_MIN > width) {
+    const room = Math.max(1, Math.floor((width - 4) / TRAIL_MIN))
+    start = Math.max(0, Math.min(cur - 1, n - room))
+    end = Math.min(n, start + room)
+  }
+  const shown = views.slice(start, end)
+  const at = cur - start
+  const avail = width - (start > 0 ? 2 : 0) - (end < n ? 2 : 0)
+  const pctOf = (v: PhaseView) => (v.isCurrent ? ` ${v.pct}% ` : '')
+  const least = (v: PhaseView) => size(pctOf(v)) + 2
+  const named = shown.map(v => ({ full: isShortId(v.phase) && phaseShort(v.phase) ? `${v.phase.id} ${phaseShort(v.phase)}` : trailName(v.phase), name: trailName(v.phase) }))
+  const sum = (list: number[]) => list.reduce((a, b) => a + b, 0)
+
+  let texts: string[] = []
+  let widths: number[] = []
+  let lines = 1
+  const tries = [
+    { pick: (x: (typeof named)[number]) => x.full, lines: 1 },
+    { pick: (x: (typeof named)[number]) => x.name, lines: 1 },
+    { pick: (x: (typeof named)[number]) => x.name, lines: 2 },
+  ]
+  const fits = tries.find(t => sum(named.map((x, i) => Math.max(least(shown[i]!), slotFor(t.pick(x), t.lines)))) <= avail)
+  if (fits) {
+    texts = named.map(fits.pick)
+    widths = texts.map((t, i) => Math.max(least(shown[i]!), slotFor(t, fits.lines)))
+    lines = fits.lines
+    // Slots iguais quando dá; senão, a sobra alonga as linhas entre os nós.
+    const even = Math.floor(avail / shown.length)
+    if (Math.max(...widths) <= even) widths = widths.map(() => even)
+    else {
+      const extra = avail - sum(widths)
+      const gaps = Math.max(1, shown.length - 1)
+      widths = widths.map((w, i) => (i < shown.length - 1 || shown.length === 1 ? w + Math.floor(extra / gaps) + (i < extra % gaps ? 1 : 0) : w))
+    }
+  } else {
+    // Não cabe: a fase atual fica com o nome inteiro (em duas linhas) e as outras dividem o resto, cortadas.
+    texts = named.map(x => x.name)
+    lines = 2
+    const mine = Math.max(least(shown[at]!), slotFor(texts[at]!, 2))
+    const each = shown.length > 1 ? Math.floor((avail - mine) / (shown.length - 1)) : 0
+    widths =
+      shown.length === 1
+        ? [avail]
+        : each >= 4
+          ? shown.map((_, i) => (i === at ? mine : each))
+          : shown.map((v, i) => Math.max(least(v), Math.floor(avail / shown.length) - (i === at ? 0 : 0)))
+  }
+
+  const nodes: Seg[] = []
+  const labels: Seg[][] = Array.from({ length: lines }, () => [])
+  if (start > 0) {
+    nodes.push({ text: '… ', tone: 'dim' })
+    for (const l of labels) l.push({ text: '  ', tone: 'dim' })
+  }
+  shown.forEach((v, i) => {
+    const w = widths[i]!
+    const state = nodeState(v)
+    const isLast = i === shown.length - 1
+    const pct = pctOf(v)
+    nodes.push({ text: NODE_GLYPH[state], tone: state })
+    if (!isLast || end < n) {
+      if (pct) nodes.push({ text: pct, tone: 'current' })
+      nodes.push({ text: '━'.repeat(Math.max(1, w - 1 - size(pct))), tone: state === 'done' ? 'done' : 'todo' })
+    } else if (pct) {
+      nodes.push({ text: pct.trimEnd(), tone: 'current' })
+    }
+    const text = wrapFit(texts[i]!, w - 1, lines, true)
+    labels.forEach((l, k) => {
+      const t = text[k] ?? ''
+      l.push({ text: isLast ? t : t.padEnd(w), tone: state === 'current' || state === 'doing' ? state : 'dim' })
+    })
+  })
+  if (end < n) nodes.push({ text: ' …', tone: 'dim' })
+
+  return { nodes, labels: labels.filter(l => l.some(s => s.text.trim())) }
+}
+
+/** Cores médias, que leem bem no tema claro e no escuro (o texto, com contraste de uns 4:1 nos dois). */
+export const HEX = { done: '#3fa66a', current: '#d97757', todo: '#8a8f98', blocked: '#8a8f98', text: '#737983', accentText: '#c4633f' } as const
+
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+const fixed = (n: number) => Math.round(n * 10) / 10
+
+/** Largura em pixels dos desenhos do painel, pela largura do painel em células (a superfície limita ao espaço que há). */
+export const paneSvgWidth = (columns: number) => Math.max(220, Math.min(840, columns * 7 - 16))
+
+/** Largura média de um caractere do texto da trilha (12 px), normal e em negrito. */
+const CHAR_PX = 6.4
+const BOLD_PX = 6.9
+
+/**
+ * A trilha das fases em SVG, como um stepper: um nó por fase ligado por linha (a feita
+ * cheia com check, a atual destacada com o número e o %, a em andamento com anel, a
+ * fazer vazia com o número) e embaixo o nome, em até duas linhas.
+ */
+export const trailSvg = (views: readonly PhaseView[], width: number): string => {
+  const n = Math.max(1, views.length)
+  const slot = width / n
+  const cy = 18
+  const r = 10
+  const font = 'font-family="system-ui,-apple-system,Segoe UI,sans-serif"'
+  const names = views.map(v => wrapFit(trailName(v.phase), Math.max(1, Math.floor((slot - 8) / (v.isCurrent ? BOLD_PX : CHAR_PX))), 2, true))
+  const rows = Math.max(1, ...names.map(l => l.length))
+  const ci = views.findIndex(v => v.isCurrent)
+  const pct = ci >= 0 ? `${views[ci]!.pct}%` : ''
+  const pctPx = size(pct) * 7.4
+  const beside = ci >= 0 && pctPx <= (ci === views.length - 1 ? slot / 2 - r - 8 : slot - 2 * r - 20)
+  const labelY = (k: number) => 48 + k * 15
+  const height = labelY(rows - 1) + 6 + (ci >= 0 && !beside ? 15 : 0)
+  const cx = (i: number) => fixed(slot * (i + 0.5))
+  const out: string[] = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">`]
+
+  views.forEach((v, i) => {
+    if (i === views.length - 1) return
+    const green = nodeState(v) === 'done'
+    const from = v.isCurrent && beside ? cx(i) + r + 6 + pctPx + 4 : cx(i) + r + 4
+    const to = cx(i + 1) - r - 4
+    if (to - from < 2) return
+    out.push(
+      `<line x1="${fixed(from)}" y1="${cy}" x2="${fixed(to)}" y2="${cy}" stroke="${green ? HEX.done : HEX.todo}" stroke-opacity="${green ? 1 : 0.5}" stroke-width="3" stroke-linecap="round"/>`,
+    )
+  })
+  views.forEach((v, i) => {
+    const x = cx(i)
+    const state = nodeState(v)
+    const id = isShortId(v.phase) && size(v.phase.id) <= 2 ? esc(v.phase.id) : ''
+    const num = (color: string) =>
+      id ? `<text x="${x}" y="${cy + 4}" text-anchor="middle" ${font} font-size="11" font-weight="700" fill="${color}">${id}</text>` : ''
+    if (state === 'current') {
+      out.push(`<circle cx="${x}" cy="${cy}" r="${r + 5}" fill="${HEX.current}" fill-opacity="0.22"/>`)
+      out.push(`<circle cx="${x}" cy="${cy}" r="${r + 1}" fill="${HEX.current}"/>`, num('#fff'))
+    } else if (state === 'done') {
+      out.push(`<circle cx="${x}" cy="${cy}" r="${r}" fill="${HEX.done}"/>`)
+      out.push(`<path d="M${fixed(x - 4.5)} ${cy} l3.2 3.4 l5.8 -6.6" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`)
+    } else if (state === 'doing') {
+      out.push(`<circle cx="${x}" cy="${cy}" r="${r - 1}" fill="${HEX.current}" fill-opacity="0.15" stroke="${HEX.current}" stroke-width="2.5"/>`, num(HEX.accentText))
+    } else {
+      out.push(`<circle cx="${x}" cy="${cy}" r="${r - 1}" fill="none" stroke="${HEX.todo}" stroke-width="2"/>`, num(HEX.text))
+    }
+    names[i]!.forEach((line, k) =>
+      out.push(
+        `<text x="${x}" y="${labelY(k)}" text-anchor="middle" ${font} font-size="12" font-weight="${v.isCurrent ? 600 : 500}" fill="${HEX.text}">${esc(line)}</text>`,
+      ),
+    )
+    if (v.isCurrent) {
+      out.push(
+        beside
+          ? `<text x="${fixed(x + r + 6)}" y="${cy + 4}" text-anchor="start" ${font} font-size="12" font-weight="700" fill="${HEX.accentText}">${pct}</text>`
+          : `<text x="${x}" y="${labelY(rows)}" text-anchor="middle" ${font} font-size="12" font-weight="700" fill="${HEX.accentText}">${pct}</text>`,
+      )
+    }
+  })
+  out.push('</svg>')
+
+  return out.filter(Boolean).join('')
+}
+
+/** O texto alternativo da trilha: cada fase com o estado. */
+export const trailAlt = (views: readonly PhaseView[]) =>
+  `Fases: ${views
+    .map(v => `${v.phase.id}${phaseShort(v.phase) ? ` ${phaseShort(v.phase)}` : ''} ${v.isCurrent ? `atual, ${v.pct}%` : PHASE_LABEL[v.phase.status]}`)
+    .join('; ')}`
+
+/** Barra segmentada em SVG: feito (verde), andamento (destaque), esperando (cinza claro) e o trilho. */
+export const segBarSvg = (c: Counts, width: number, height = 8): string => {
+  const x = (n: number) => fixed((c.total > 0 ? n / c.total : 0) * width)
+  const r = height / 2
+  const done = x(c.done)
+  const doing = x(c.doing)
+  const blocked = x(c.blocked)
+
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">`,
+    `<defs><clipPath id="c"><rect width="${width}" height="${height}" rx="${r}"/></clipPath></defs>`,
+    `<rect width="${width}" height="${height}" rx="${r}" fill="${HEX.todo}" fill-opacity="0.22"/>`,
+    '<g clip-path="url(#c)">',
+    done > 0 ? `<rect width="${done}" height="${height}" fill="${HEX.done}"/>` : '',
+    doing > 0 ? `<rect x="${done}" width="${doing}" height="${height}" fill="${HEX.current}"/>` : '',
+    blocked > 0 ? `<rect x="${fixed(done + doing)}" width="${blocked}" height="${height}" fill="${HEX.blocked}" fill-opacity="0.35"/>` : '',
+    '</g></svg>',
+  ].join('')
+}
+
+/** A barrinha da faixa: "▰▰▰▰▱▱▱▱▱▱". */
+export const bandBar = (pct: number, cells = 10) => {
+  const n = Math.round((Math.min(100, Math.max(0, pct)) / 100) * cells)
+  return { full: '▰'.repeat(n), empty: '▱'.repeat(cells - n) }
+}
+
+/** Quantos commits o aviso de desatualizado mostra (undefined: sem aviso). */
+export const staleCount = (commits: number | null, limit: number): number | undefined =>
+  commits !== null && limit > 0 && commits > limit ? commits : undefined
+
+/** O chip do aviso de desatualizado: "14 commits sem atualizar". */
+export const staleChip = (commits: number) => `${commits} ${commits === 1 ? 'commit' : 'commits'} sem atualizar`
+
+/** As partes da faixa, para caber numa linha. */
+export type BandInput = {
+  width: number
+  /** "Fase 2" (ou "Roadmap" sem fase). */
+  head: string
+  /** "43%", ou vazio sem fase. */
+  pct: string
+  /** Há fase atual: a barrinha pode aparecer. */
+  hasBar: boolean
+  /** O rótulo da próxima (ou "nada livre agora"). */
+  label: string
+  /** Há próxima: o rótulo vem depois de "›" e há o botão Fazer. */
+  hasNext: boolean
+  owner?: string
+  mine?: string
+  stale?: string
+  /** O rótulo do botão de ocultar. */
+  hide: string
+}
+
+/** O que a faixa mostra: com ou sem "Fase N", barrinha e moldura nos botões, quais chips e o rótulo (cortado só no último caso). */
+export type BandPlan = { showHead: boolean; bar: boolean; framed: boolean; label: string; showOwner: boolean; showMine: boolean; showStale: boolean }
+
+/** As células da barrinha da faixa (glifos ou SVG de 72 px). */
+export const BAND_BAR_CELLS = 10
+
+/**
+ * Cabe a faixa em `width` células: "Fase 2 ▰▰▰▱▱ 43%  › rótulo (você)  comigo: 2  ⚠ …  [ Fazer ] [ Roadmap ] ocultar".
+ * O rótulo da próxima é o que importa: para ele caber inteiro saem, nesta ordem, o aviso,
+ * o "comigo: N", o dono, a barrinha, a moldura dos botões e o "Fase N". Só quando nem
+ * assim cabe é que o rótulo encolhe; então ele nunca fica menor numa faixa mais larga.
+ */
+export const planBand = (b: BandInput): BandPlan => {
+  type Config = Omit<BandPlan, 'label'>
+  const cells = (c: Config, label: number) => {
+    const parts = [
+      c.showHead ? size(b.head) : -1,
+      c.bar ? BAND_BAR_CELLS : -1,
+      size(b.pct) +
+        (b.hasNext ? 4 : 2) +
+        label +
+        (c.showOwner && b.owner ? size(b.owner) + 3 : 0) +
+        (c.showMine && b.mine ? size(b.mine) + 2 : 0) +
+        (c.showStale && b.stale ? size(b.stale) + 2 : 0),
+      b.hasNext ? (c.framed ? 9 : 5) : -1,
+      c.framed ? 11 : 3,
+      size(b.hide),
+    ].filter(p => p >= 0)
+
+    return parts.reduce((a, p) => a + p, 0) + parts.length - 1
+  }
+  const all: Config = { showHead: true, bar: b.hasBar, framed: true, showOwner: true, showMine: true, showStale: true }
+  const configs: Config[] = [
+    all,
+    { ...all, showStale: false },
+    { ...all, showStale: false, showMine: false },
+    { ...all, showStale: false, showMine: false, showOwner: false },
+    { ...all, showStale: false, showMine: false, showOwner: false, bar: false },
+    { ...all, showStale: false, showMine: false, showOwner: false, bar: false, framed: false },
+    { ...all, showStale: false, showMine: false, showOwner: false, bar: false, framed: false, showHead: false },
+  ]
+  const shown = (c: Config, label: string): BandPlan => ({
+    ...c,
+    label,
+    showOwner: c.showOwner && !!b.owner,
+    showMine: c.showMine && !!b.mine,
+    showStale: c.showStale && !!b.stale,
+  })
+  for (const c of configs) if (cells(c, size(b.label)) <= b.width) return shown(c, b.label)
+  const last = configs.at(-1)!
+
+  return shown(last, cutAtWord(b.label, Math.max(4, b.width - cells(last, 0))))
+}
 
 const fold = (s: string) =>
   s
@@ -524,9 +1186,10 @@ const fold = (s: string) =>
     .toLowerCase()
 
 /**
- * Os itens mais parecidos com a busca: o id exato primeiro, depois quem tem mais
- * palavras da busca no id ou no título (área, notas e espera valem menos); os não
- * feitos antes dos feitos; empate pela ordem do arquivo.
+ * Os itens mais parecidos com a busca: o id exato primeiro, depois o rótulo curto
+ * exato, depois quem tem mais palavras da busca no id, no título ou no rótulo curto
+ * (área, notas e espera valem menos); os não feitos antes dos feitos; empate pela
+ * ordem do arquivo.
  */
 export const searchItems = (r: Roadmap, query: string, limit = QUERY_LIMIT): { total: number; items: Item[] } => {
   const q = fold(query).trim()
@@ -534,9 +1197,9 @@ export const searchItems = (r: Roadmap, query: string, limit = QUERY_LIMIT): { t
   const words = parts.filter(w => w.length >= 2).length > 0 ? parts.filter(w => w.length >= 2) : parts
   const scored = r.items
     .map((item, n) => {
-      const main = fold(`${item.id} ${item.title}`)
+      const main = fold(`${item.id} ${item.title} ${item.short ?? ''}`)
       const extra = fold(`${item.area ?? ''} ${item.notes ?? ''} ${item.waitingOn ?? ''}`)
-      let score = item.id.toLowerCase() === q ? 100 : 0
+      let score = item.id.toLowerCase() === q ? 100 : item.short && fold(item.short).trim() === q ? 50 : 0
       for (const w of words) score += main.includes(w) ? 2 : extra.includes(w) ? 1 : 0
       return { item, n, score }
     })
@@ -554,16 +1217,30 @@ export const staleText = (commits: number | null, limit: number): string | undef
   commits !== null && limit > 0 && commits > limit ? `roadmap desatualizado: ${commits} commits sem atualizar` : undefined
 
 /**
- * O pedido que os botões "Fazer a próxima" e "Pedir ao Claude" põem no prompt: um texto
- * para o item do Claude, um para o do usuário e um para o de "both", com as notas do item.
+ * O pedido que os botões "Fazer" e "Fazer agora" põem no prompt: um texto para o item do
+ * Claude, um para o do usuário e um para o de "both", com as notas do item. O item que
+ * ainda não pode começar (bloqueado, ou à espera de outra tarefa) ganha outro pedido:
+ * ver o que falta para destravar, sem marcar como em andamento.
  */
 export const startPrompt = (item: Item, r: Roadmap, withTool = true) => {
   const mark = (state: string) => `marque como ${state} no roadmap${withTool ? ' (roadmap_update)' : ''}`
   const task = `a tarefa "${item.title}" (${item.id}) do roadmap`
   const doing = item.status === 'doing'
   const notes = item.notes ? ` Notas do item: ${cut(item.notes, NOTES_MAX)}` : ''
+  const deps = pendingDeps(item, r)
+  const depList = deps.map(d => `"${d.title}" (${d.id})`).join(', ')
   let text: string
-  if (lower(item.owner) === 'both') {
+  if (item.status === 'blocked') {
+    const why = [item.waitingOn ? `esperando ${item.waitingOn}` : undefined, deps.length > 0 ? `dependendo de ${depList}` : undefined].filter(Boolean).join(', e ')
+    text =
+      `${capital(task)} está bloqueada${why ? `, ${why}` : ''}. Veja se já dá para destravar e me diga o que falta e com quem está. ` +
+      `Não comece a tarefa; se o bloqueio já tiver saído, ${mark('a fazer')}, com uma nota do que mudou.`
+  } else if (item.status === 'todo' && deps.length > 0) {
+    text =
+      `${capital(task)} depende de ${depList}, que ainda não ${deps.length === 1 ? 'está feita' : 'estão feitas'}. ` +
+      `Me diga o que falta para ela ficar livre (${deps.length === 1 ? 'o que essa tarefa espera e com quem está' : 'o que essas tarefas esperam e com quem estão'}). ` +
+      'Não comece esta tarefa antes disso.'
+  } else if (lower(item.owner) === 'both') {
     text = doing
       ? `Vamos continuar ${task}, que é minha e sua e já está em andamento: faça a sua parte e me diga, passo a passo, o que é comigo. Só ${mark('feita')}, com a evidência, quando as duas partes estiverem prontas.`
       : `Vamos fazer ${task}, que é minha e sua: ${mark('em andamento')} ao começar, faça a sua parte e me diga, passo a passo, o que é comigo. Só marque como feita, com a evidência, quando as duas partes estiverem prontas.`
@@ -582,24 +1259,6 @@ export const startPrompt = (item: Item, r: Roadmap, withTool = true) => {
 
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
-export const textBar = (pct: number, width: number) => {
-  const n = Math.round((Math.min(100, Math.max(0, pct)) / 100) * width)
-  return '█'.repeat(n) + '░'.repeat(width - n)
-}
-
-/** Barra de progresso em SVG, sem ids (várias convivem na mesma página). */
-export const barSvg = (pct: number, width: number, color: string, height = 8) => {
-  const fill = Math.round((Math.min(100, Math.max(0, pct)) / 100) * width * 10) / 10
-  const r = height / 2
-
-  return [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">`,
-    `<rect width="${width}" height="${height}" rx="${r}" fill="#8a8f98" fill-opacity="0.25"/>`,
-    fill > 0 ? `<rect width="${Math.max(fill, height)}" height="${height}" rx="${r}" fill="${color}"/>` : '',
-    '</svg>',
-  ].join('')
-}
-
 /** O que o Claude pode pedir ao roadmap_status além do resumo. */
 export type StatusInput = { query?: unknown; phase?: unknown; all?: unknown }
 
@@ -613,6 +1272,7 @@ const itemText = (r: Roadmap, i: Item, details = false) => {
     i.gate && 'gate',
     i.waitingOn && `espera: ${i.waitingOn}`,
     deps.length > 0 && `depende de: ${deps.map(d => d.id).join(', ')}`,
+    details && i.short && `rótulo: ${i.short}`,
     details && i.evidence && `evidência: ${cut(i.evidence, 120)}`,
     details && i.notes && `notas: ${cut(i.notes, 160)}`,
   ].filter(Boolean)
@@ -686,6 +1346,20 @@ const summaryText = (r: Roadmap, file: string, warning: string | undefined, all:
   if (s.waitingElsewhere > 0) out.push(`Bloqueados em outras fases: ${s.waitingElsewhere}.`)
   out.push(listText('Decisões em aberto (fase atual e sem fase)', s.decisions, decisionText, limit))
   if (s.decisionsElsewhere > 0) out.push(`Decisões em aberto de outras fases: ${s.decisionsElsewhere}.`)
+  const long = r.items.filter(i => i.phase === s.current?.phase.id && i.status !== 'done' && !i.short && Array.from(i.title).length > LABEL_MAX).length
+  if (long > 0) {
+    out.push(
+      `${long} ${long === 1 ? 'item' : 'itens'} da fase atual sem "short" e com título de mais de ${LABEL_MAX} caracteres: ` +
+        `o quadro mostra o título cortado. Um "short" (rótulo de até ${LABEL_MAX}) deixa o cartão legível.`,
+    )
+  }
+  const longPhases = r.phases.filter(p => Array.from(p.short ?? p.name).length > PHASE_LABEL_MAX)
+  if (longPhases.length > 0) {
+    out.push(
+      `${longPhases.length === 1 ? 'Fase' : 'Fases'} com rótulo de mais de ${PHASE_LABEL_MAX} caracteres (${longPhases.map(p => p.id).join(', ')}): ` +
+        `a trilha das fases corta o nome. Um "short" de até ${PHASE_LABEL_MAX} na fase resolve.`,
+    )
+  }
   out.push(HINT)
 
   return out.filter(Boolean).join('\n')
@@ -733,7 +1407,7 @@ export const TEMPLATE = [
   '  ],',
   '  "items": [',
   '    { "id": "primeiro-passo", "phase": "1", "title": "Primeiro passo", "status": "todo", "owner": "Claude" },',
-  '    { "id": "conta-de-teste", "phase": "1", "title": "Criar a conta de teste", "status": "blocked", "owner": "<nome do usuário>", "waitingOn": "aprovação" },',
+  '    { "id": "conta-de-teste", "phase": "1", "title": "Criar a conta de teste no ambiente de homologação", "short": "Conta de teste", "status": "blocked", "owner": "<nome do usuário>", "waitingOn": "aprovação" },',
   '    { "id": "segundo-passo", "phase": "1", "title": "Segundo passo", "status": "todo", "owner": "both", "dependsOn": ["primeiro-passo"], "gate": true }',
   '  ],',
   '  "path": ["primeiro-passo", "segundo-passo"],',
@@ -746,9 +1420,9 @@ export const missingText = (file: string) =>
     `Não há roadmap neste projeto (procurei em ${file}). Para criar um, escreva esse arquivo em JSON, formato versão 1. Modelo:`,
     TEMPLATE,
     'Campos:',
-    '- owner, na raiz: o nome do usuário. Os itens com esse mesmo owner (maiúsculas não importam) ou com "both" ficam "com você" no painel.',
-    '- phases[]: id (único), name, goal, status (done, doing ou todo; a fase atual é a primeira "doing"), gate (o que precisa valer para fechar a fase), gateStatus, notes.',
-    '- items[]: id (único, sem espaços), phase (id de uma fase), title (curto e acionável), status (done, doing, todo ou blocked), owner ("Claude", o mesmo owner da raiz ou "both").',
+    '- owner, na raiz: o nome do usuário. Os itens com esse mesmo owner (maiúsculas não importam) ou com "both" são seus: o filtro "Comigo" do painel e o "você" nos cartões.',
+    '- phases[]: id (único), name, short (rótulo da fase na trilha do painel, até 18 caracteres; sem ele, o name cortado), goal, status (done, doing ou todo; a fase atual é a primeira "doing"), gate (o que precisa valer para fechar a fase), gateStatus, notes.',
+    '- items[]: id (único, sem espaços), phase (id de uma fase), title (acionável), short (rótulo do cartão no quadro, até 40 caracteres; sem ele, o title cortado em 40), status (done, doing, todo ou blocked), owner ("Claude", o mesmo owner da raiz ou "both").',
     '- items[], opcionais: dependsOn (ids dos itens que precisam estar feitos antes), waitingOn (junto de blocked: o que o item espera), ' +
       'doneAt (AAAA-MM-DD) e evidence (commit, arquivo, teste) nos feitos, area, gate (true se o item faz parte do gate da fase), notes.',
     '- path: ids dos itens na ordem em que devem ser feitos; os que ficam fora vêm depois, na ordem do arquivo.',
@@ -1081,11 +1755,37 @@ export type UpdateInput = {
   doneAt?: unknown
   note?: unknown
   waitingOn?: unknown
+  short?: unknown
 }
 
+/** O "short" pedido: undefined (não mexe), null (tira o campo), o texto, ou o erro. */
+const shortInput = (v: unknown, ideal = LABEL_MAX): string | null | undefined | { error: string } => {
+  if (v === undefined) return undefined
+  if (v === null || (typeof v === 'string' && !v.trim())) return null
+  const problem = shortProblem(v, ideal)
+
+  return problem ? { error: `${capital(problem)}.` } : (v as string).trim()
+}
+
+/** Põe o "short" pedido no objeto (ou tira, com null). */
+const withShort = (edits: Edits, obj: Raw, at: string, short: string | null | undefined, order: readonly string[]): Raw => {
+  if (short === undefined) return obj
+  if (short === null) {
+    edits.delete(obj, at, 'short')
+    return obj
+  }
+
+  return edits.set(obj, at, 'short', short, order)
+}
+
+/** O pedaço da mensagem sobre o "short". */
+const shortNote = (short: string | null | undefined) => (short === null ? 'sem rótulo curto' : short ? `rótulo "${short}"` : undefined)
+
 /**
- * Muda o estado de um item (ou de uma fase, se o id for de fase). "done" sem data
- * usa a de hoje; sair de "done" tira a data. Atualiza "updated". Nunca apaga item.
+ * Muda o estado de um item (ou de uma fase, se o id for de fase) e, com "short",
+ * o rótulo curto ("" ou null tira). Só muda o que a chamada pede: virar "done" sem data
+ * usa a de hoje; sair de "done" tira a data; sem "status", o estado e a data ficam.
+ * Atualiza "updated". Nunca apaga item.
  */
 export const applyUpdate = (original: string, input: UpdateInput, today: string): Change => {
   const opened = open(original)
@@ -1098,10 +1798,15 @@ export const applyUpdate = (original: string, input: UpdateInput, today: string)
   const evidence = fields.evidence as string | undefined
   const note = fields.note as string | undefined
   const waitingOn = fields.waitingOn as string | undefined
-
   const n = r.items.findIndex(i => i.id === id)
+  const k = n === -1 ? r.phases.findIndex(p => p.id === id) : -1
+  const short = shortInput(input.short, k >= 0 ? PHASE_LABEL_MAX : LABEL_MAX)
+  if (short !== null && typeof short === 'object') return { ok: false, error: short.error }
+  /** Só o rótulo muda: a mensagem não fala do estado. */
+  const onlyShort = short !== undefined && input.status === undefined && !evidence && !note && !waitingOn && input.doneAt === undefined
+
+  // Só mexe no que a chamada pede: sem "status", o estado (e a data) ficam como estão.
   if (n === -1) {
-    const k = r.phases.findIndex(p => p.id === id)
     if (k === -1) return { ok: false, error: `Não existe item "${id}" no roadmap.${similar(r, id)}` }
     const phase = r.phases[k]!
     const status = input.status ?? phase.status
@@ -1112,13 +1817,16 @@ export const applyUpdate = (original: string, input: UpdateInput, today: string)
     const before = JSON.stringify(phases[k])
     const edits = new Edits()
     const at = `/phases/${k}`
-    let obj = edits.set(phases[k]!, at, 'status', status, PHASE_KEYS)
+    let obj = phases[k]!
+    if (input.status !== undefined) obj = edits.set(obj, at, 'status', status, PHASE_KEYS)
+    obj = withShort(edits, obj, at, short, PHASE_KEYS)
     if (evidence) obj = edits.set(obj, at, 'gateStatus', evidence, PHASE_KEYS)
     if (note) obj = edits.set(obj, at, 'notes', phase.notes ? `${phase.notes} · ${note}` : note, PHASE_KEYS)
     if (JSON.stringify(obj) === before) return { ok: true, text: original, message: `${phaseLabel(phase)} já estava assim.` }
     phases[k] = obj
+    const what = [onlyShort ? undefined : PHASE_LABEL[status as PhaseStatus], shortNote(short)].filter(Boolean).join(' · ')
 
-    return finish(doc, edits, original, today, `${phaseLabel(phase)} → ${PHASE_LABEL[status as PhaseStatus]}`, phaseLabel(phase))
+    return finish(doc, edits, original, today, `${phaseLabel(phase)} → ${what}`, phaseLabel(phase))
   }
 
   const item = r.items[n]!
@@ -1129,16 +1837,23 @@ export const applyUpdate = (original: string, input: UpdateInput, today: string)
   if (input.doneAt !== undefined && (typeof input.doneAt !== 'string' || !DATE.test(input.doneAt))) {
     return { ok: false, error: `"doneAt" precisa ser uma data AAAA-MM-DD (recebi ${quote(input.doneAt)}).` }
   }
+  if (input.doneAt !== undefined && status !== 'done') {
+    return { ok: false, error: '"doneAt" só vale para item feito: passe status "done" junto.' }
+  }
   const items = doc.items as Raw[]
   const before = JSON.stringify(items[n])
   const edits = new Edits()
   const at = `/items/${n}`
-  let obj = edits.set(items[n]!, at, 'status', status, ITEM_KEYS)
+  let obj = items[n]!
+  if (input.status !== undefined) obj = edits.set(obj, at, 'status', status, ITEM_KEYS)
+  obj = withShort(edits, obj, at, short, ITEM_KEYS)
   let doneAt: string | undefined
   if (status === 'done') {
-    doneAt = (input.doneAt as string | undefined) ?? (item.status === 'done' && item.doneAt ? item.doneAt : today)
-    obj = edits.set(obj, at, 'doneAt', doneAt, ITEM_KEYS)
-  } else {
+    // A data entra quando o item passa a feito, ou quando vem na chamada; o que já estava feito guarda a dele.
+    const given = input.doneAt as string | undefined
+    doneAt = given ?? (item.status === 'done' ? item.doneAt : today)
+    if (doneAt !== undefined && (given !== undefined || item.status !== 'done')) obj = edits.set(obj, at, 'doneAt', doneAt, ITEM_KEYS)
+  } else if (input.status !== undefined) {
     edits.delete(obj, at, 'doneAt')
   }
   if (evidence) obj = edits.set(obj, at, 'evidence', evidence, ITEM_KEYS)
@@ -1146,15 +1861,9 @@ export const applyUpdate = (original: string, input: UpdateInput, today: string)
   if (note) obj = edits.set(obj, at, 'notes', item.notes ? `${item.notes} · ${note}` : note, ITEM_KEYS)
   if (JSON.stringify(obj) === before) return { ok: true, text: original, message: `"${item.title}" já estava assim.`, title: item.title }
   items[n] = obj
+  const what = [onlyShort ? undefined : `${ITEM_LABEL[status as ItemStatus]}${doneAt ? ` em ${doneAt}` : ''}`, shortNote(short)].filter(Boolean).join(' · ')
 
-  return finish(
-    doc,
-    edits,
-    original,
-    today,
-    `"${item.title}" → ${ITEM_LABEL[status as ItemStatus]}${doneAt ? ` em ${doneAt}` : ''}`,
-    item.title,
-  )
+  return finish(doc, edits, original, today, `"${item.title}" → ${what}`, item.title)
 }
 
 export type AddInput = {
@@ -1168,6 +1877,7 @@ export type AddInput = {
   area?: unknown
   gate?: unknown
   notes?: unknown
+  short?: unknown
 }
 
 /**
@@ -1209,6 +1919,8 @@ export const applyAdd = (original: string, input: AddInput, today: string): Chan
     if (typeof v === 'object') return { ok: false, error: v.error }
     texts[key] = v
   }
+  const short = shortInput(input.short)
+  if (short !== null && typeof short === 'object') return { ok: false, error: short.error }
 
   const id = uniqueId(slugify(title), new Set(r.items.map(i => i.id)))
   const rawPhase = (doc.phases as Raw[]).find(p => idOf(p.id) === phase.id)
@@ -1216,6 +1928,7 @@ export const applyAdd = (original: string, input: AddInput, today: string): Chan
   put(item, 'id', id)
   put(item, 'phase', rawPhase?.id ?? phase.id)
   put(item, 'title', title)
+  if (short) put(item, 'short', short)
   put(item, 'status', status)
   if (texts.owner) put(item, 'owner', texts.owner)
   if (texts.waitingOn) put(item, 'waitingOn', texts.waitingOn)

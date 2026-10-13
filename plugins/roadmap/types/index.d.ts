@@ -6,6 +6,8 @@ export type Phase = {
   id: string
   /** Vazio quando o arquivo não dá nome à fase. */
   name: string
+  /** Rótulo curto da fase na trilha (até 60; sem ele, o nome cortado em 18). */
+  short?: string
   goal?: string
   status: PhaseStatus
   gate?: string
@@ -18,6 +20,8 @@ export type Item = {
   id: string
   phase: string
   title: string
+  /** Rótulo curto do cartão (até 60; sem ele, o título cortado em 40). */
+  short?: string
   status: ItemStatus
   /** "Claude", o nome do usuário (o "owner" do arquivo) ou "both". */
   owner?: string
@@ -82,6 +86,63 @@ export type Summary = {
   doneElsewhere: { phase: Phase; count: number }[]
 }
 
+/** As colunas do quadro: Agora, Próximas, Esperando e Feito. */
+export type ColumnId = 'doing' | 'next' | 'waiting' | 'done'
+
+/** O filtro do quadro: tudo, ou só os itens do usuário (e os de "both"). */
+export type Filter = 'all' | 'mine'
+
+/** Quem faz o item: o usuário, o Claude, os dois ou outra pessoa. */
+export type OwnerKind = 'me' | 'claude' | 'both' | 'other'
+
+/** O layout do quadro pela largura: 4 colunas lado a lado, grade 2x2 ou empilhado. */
+export type Layout = 'row' | 'grid' | 'stack'
+
+/** Os itens de uma fase por estado. */
+export type Counts = { done: number; doing: number; blocked: number; todo: number; total: number }
+
+/** Um cartão do quadro. */
+export type Card = {
+  id: string
+  /** O "short", ou o título cortado em 40. */
+  label: string
+  status: ItemStatus
+  owner?: OwnerKind
+  /** "você", "Claude", "os dois" ou o nome. */
+  ownerText?: string
+  gate: boolean
+  /** Nos que esperam: o "waitingOn" do bloqueado (ou a primeira dependência aberta), ou a tarefa de que o item depende. */
+  wait?: string
+  /** "blocked": bloqueado; "dep": a fazer, esperando outra tarefa ficar pronta. */
+  waitKind?: 'blocked' | 'dep'
+  phase: string
+  /** O item é de outra fase que não a atual (nas Próximas e no Agora). */
+  isOtherPhase: boolean
+}
+
+export type KanbanColumn = {
+  id: ColumnId
+  title: string
+  /** Quantos itens a coluna tem, com o filtro. */
+  total: number
+  cards: Card[]
+  /** Quantos ficaram de fora (o "+N" abre mais 8 a cada clique). */
+  more: number
+  /** O "+N" já foi apertado: a coluna mostra o "menos". */
+  isExpanded: boolean
+}
+
+/** O quadro como o painel o desenha. */
+export type Kanban = {
+  filter: Filter
+  /** Itens do usuário em Agora, Próximas e Esperando (o "Comigo" do painel e da faixa). */
+  mine: number
+  layout: Layout
+  /** Largura de cada coluna, em células. */
+  columnWidth: number
+  columns: KanbanColumn[]
+}
+
 /** O arquivo do roadmap como o mod o leu por último. */
 export type Board = {
   /** Caminho completo do arquivo. */
@@ -108,8 +169,16 @@ declare module 'claude-code' {
       stale: number | null
       /** A assinatura do roadmap quando a pessoa ocultou a faixa. */
       hidden: string | null
-      /** O último aviso do mod. */
-      notice: string | null
+      /** O filtro do quadro no painel. */
+      filter: Filter
+      /** Quantas vezes o "+N" de cada coluna foi apertado (8 cartões a mais por vez). */
+      expanded: Partial<Record<ColumnId, number>>
+      /** O id do item do cartão selecionado (o cartão abre no lugar, com o detalhe). */
+      selected: string | null
+      /** A lista de decisões do rodapé aberta. */
+      decisions: boolean
+      /** Quando o mod viu cada item virar feito (id → instante): a ordem da coluna Feito no mesmo dia. */
+      doneSeen: Record<string, number>
     }
   }
 }
