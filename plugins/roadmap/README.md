@@ -60,7 +60,9 @@ From top to bottom, with no lists of text:
 - **Phase trail:** one node per phase with its short label underneath.
   - **Desktop, VS Code and mobile:** a drawn stepper. A done phase is a green node with a check, the current one is highlighted with its number and its %, a phase in progress that is not the current one has an orange ring, and a phase to do is an empty ring with its number.
   - **Terminal:** two or three lines of glyphs: ● done, ◉ current with its %, ◐ in progress, ○ to do. The label shows "id name" when it fits, then the name alone, then the name in two lines; it is cut with "…" but a word is never split across lines. With many phases, it shows a window around the current one.
-- **Current phase card:** the phase and its short name, a gate chip (*Gate 2 · pending*: the `gateStatus` up to its first punctuation; just *Gate 2* when narrow), a bar split into done, in progress and waiting (▒, lighter on Desktop), the %, and the counts (done ✓, in progress ▶, waiting ‖, to do ○).
+- **Current phase card:**
+  - **Desktop, VS Code and mobile:** a ring split into done, in progress and waiting, with the % and *1 of 6* in the middle; beside it the phase, its `goal`, and the counts with their labels (*done*, *in progress*, *waiting*, *to do*, and *with you* when you have items on the board); underneath, the whole gate with its `gateStatus`.
+  - **Terminal:** the phase and its short name, a gate chip (*Gate 2 · pending*: the `gateStatus` up to its first punctuation; just *Gate 2* when narrow), a bar split into done, in progress and waiting (▒), the %, and the counts (done ✓, in progress ▶, waiting ‖, to do ○).
 - **All / Mine N:** *Mine* keeps only your items and the `both` ones.
 - **Board:**
   - **Now:** every item in progress, the current phase's first. A card from another phase says which.
@@ -68,7 +70,7 @@ From top to bottom, with no lists of text:
   - **Waiting:** the current phase's blocked items, then its to-do items waiting for another task. Both have a dashed border and say what they wait on: *‖ card approval* for a blocked one, *after Email sign-in* for one waiting on a dependency.
   - **Done:** the current phase's done items, the latest first: by `doneAt`, and on the same day the one the mod saw finished last.
 - **Cards:** each column shows up to four (three in *Done*). **+8 of N** shows eight more at a time and **less** folds the column back. A card is the item's short label, in up to two lines and cut with "…" (at the end of a word when it can), and one line with the owner (*you*, *Claude*, *both* or the name), *Gate* and the phase when it is another one, or what it waits on.
-- **Layout:** four columns side by side from 96 columns, a 2×2 grid from 60, and stacked below that, with *Done* as a single count line.
+- **Layout:** on the desktop, each column's name has a dot in its colour. Four columns side by side from 96 columns, a 2×2 grid from 60, and stacked below that, with *Done* as a single count line.
 - **Opening a card:** clicking a card opens it in place, with a heavy border:
 
   ```
@@ -133,7 +135,7 @@ The commit count is refreshed after each turn (at most once a minute) and every 
 
 ## The file
 
-`docs/roadmap.json` from the git root (or the session's folder without git); change it with the `file` option. Format version 1:
+`docs/roadmap.json` from the git root (or the session's folder without git); change it with the `file` option. Without it, a [ROADMAP.md](#roadmapmd) works too. Format version 1:
 
 | Field | |
 |---|---|
@@ -213,11 +215,47 @@ Here the current phase is 2 at 16% (1 of 6 items), and the board shows:
 
 *Mine* is 3: the icon, the store account and the testers. The decision belongs to phase 3, so the footer has no *Decisions* chip yet. When Claude marks *Email sign-in* done, only that line and `updated` change, and the items stay one per line; *Invite the testers* then moves to *Next*.
 
+### ROADMAP.md
+
+Without `docs/roadmap.json`, the mod reads a Markdown roadmap: the first of `ROADMAP.md`, `docs/ROADMAP.md`, `docs/roadmap.md` and `roadmap.md` at the root. It is plain Markdown with checkboxes, so it reads well on GitHub too:
+
+```markdown
+# Lighthouse
+Until the beta.
+Dono: Sam
+
+## Fase 1 · Prototype
+- [x] Home screen (2026-09-20 · commit abc123)
+
+## Fase 2 · Closed beta
+> Gate: ten people use it for a week — pending
+- [x] Sync notes (2026-10-02)
+- [ ] Email sign-in @Claude (em andamento)
+  - use a magic link
+- [ ] Store account @ambos (bloqueado: card approval)
+- [ ] Invite the testers @Sam (depois de: Email sign-in) (gate)
+
+### UI
+- [ ] Pick the app icon @Sam
+
+## Fase 3 · Launch
+- [ ] Publish on the store @ambos (depois de: Store account)
+
+## Decisões
+- Charge a subscription? (fase 3)
+```
+
+- **Project:** the `#` title, the line under it is the goal, and `Dono: Name` is who *you* are (without it, the most common `@name` that is not Claude).
+- **Phases:** `## Fase N · Name` (also *Phase*, *Etapa*, *Marco*, *Milestone*, *Sprint*, or any heading that holds items). `(feita)` or `✓` marks it done and `(atual)` current; otherwise its items decide. `> Gate: text — status` is the gate. Without phase headings, everything is one phase.
+- **Items:** `- [ ]` to do, `- [x]` done, `- [/]` or `- [~]` in progress, `- [-]` blocked. After the title: `@Owner` (`@Claude`, a name, `@ambos`), `(em andamento)`, `(bloqueado: reason)`, `(depois de: Title)`, `(gate)` and `(date · evidence)` on a done item. Indented bullets are the item's notes, and a deeper heading is its area. The id is the title in lowercase with dashes (`email-sign-in`).
+- **Decisions:** the bullets of a `## Decisões` (or *Decisions*) section, with `(fase N)`.
+- **Writing:** `roadmap_update` and `roadmap_add` change only the item's line (or add one at the end of the phase, or after `after`); the rest of the file, with your notes and sections, stays as it is. `short` labels are JSON-only.
+
 ## Options
 
 | Option | Default | |
 |---|---|---|
-| `file` | `docs/roadmap.json` | Relative to the git root, or absolute |
+| `file` | `docs/roadmap.json` | Relative to the git root, or absolute; a `.md` file is read as a [ROADMAP.md](#roadmapmd). With the default, a `ROADMAP.md` counts too |
 | `showBand` | `true` | The line above the prompt |
 | `staleAfter` | `10` | Commits without touching the roadmap before the warning; `0` turns it off |
 | `claudeCanEdit` | `true` | Gives Claude `roadmap_update` and `roadmap_add`; `roadmap_status` is always there |

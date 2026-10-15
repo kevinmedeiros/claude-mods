@@ -28,6 +28,7 @@ import {
   parseRoadmap,
   pendingDeps,
   phaseCounts,
+  phaseRingSvg,
   phaseTitle,
   planBand,
   reportText,
@@ -44,6 +45,7 @@ import {
   trailText,
 } from './roadmap'
 import type { AddInput, Change, Seg, StatusInput, UpdateInput } from './roadmap'
+import { applyAddMarkdown, applyUpdateMarkdown, isMarkdown, parseMarkdown } from './markdown'
 
 const PANE = 'roadmap'
 
@@ -56,8 +58,32 @@ const selected = atom({ plugin: 'roadmap', key: 'selected' } as const, null)
 const decisionsOpen = atom({ plugin: 'roadmap', key: 'decisions' } as const, false)
 const doneSeen = atom({ plugin: 'roadmap', key: 'doneSeen' } as const, {})
 
-/** Onde está o roadmap desta sessão. */
-const where = { root: '', file: '', rel: '', project: '', hasGit: false, staleAt: 0 }
+/** Onde está o roadmap desta sessão; `candidates` são os arquivos que valem, na ordem. */
+const where = { root: '', file: '', rel: '', project: '', hasGit: false, staleAt: 0, candidates: [] as string[] }
+
+/** Sem o JSON, um ROADMAP.md também serve: estes, na ordem, depois do arquivo da opção. */
+const MARKDOWN_NAMES = ['ROADMAP.md', 'docs/ROADMAP.md', 'docs/roadmap.md', 'roadmap.md']
+
+/** Escolhe o primeiro arquivo que existe; sem nenhum, fica o da opção (onde criar). */
+const discover = async ($: EngineInterface) => {
+  for (const rel of where.candidates) {
+    const path = isAbsolute(rel) ? rel : join(where.root, rel)
+    try {
+      if (await $.fs.exists(path)) {
+        where.rel = rel
+        where.file = path
+        return
+      }
+    } catch {
+      // Sem acesso: tenta o próximo.
+    }
+  }
+  const rel = where.candidates[0] ?? 'docs/roadmap.json'
+  where.rel = rel
+  where.file = isAbsolute(rel) ? rel : join(where.root, rel)
+}
+
+const parseAny = (text: string) => (isMarkdown(where.file) ? parseMarkdown(text) : parseRoadmap(text))
 
 const isAbsolute = (p: string) => /^([A-Za-z]:)?[\\/]/.test(p)
 const join = (root: string, rel: string) => `${root.replace(/[\\/]+$/, '')}/${rel.replace(/^[\\/]+/, '')}`
@@ -74,11 +100,13 @@ const load = async ($: EngineInterface, force = false): Promise<boolean> => {
   const held = await read($, board)
   let next: Board
   try {
+    // O arquivo sumiu, ou ainda não havia nenhum: outro dos candidatos pode ter aparecido.
+    if (!(await $.fs.exists(where.file))) await discover($)
     const exists = await $.fs.exists(where.file)
     const mtimeMs = exists ? (await $.fs.stat(where.file)).mtimeMs : 0
     if (!force && held && held.exists === exists && held.mtimeMs === mtimeMs) return false
     const text = exists ? await $.fs.read(where.file) : ''
-    const parsed = exists ? parseRoadmap(text) : undefined
+    const parsed = exists ? parseAny(text) : undefined
     next = {
       path: where.file,
       rel: where.rel,
@@ -353,10 +381,62 @@ const PhaseBar = (ui: Ui, c: Counts, width: number) => {
   )
 }
 
+/** Um número com o rótulo embaixo, no cartão da fase do desktop. */
+const Count = (ui: Ui, key: string, n: number, label: string, color?: 'success' | 'claude' | 'inactive') => {
+  const { Box, Text } = ui
+
+  return (
+    <Box key={key} flexDirection="column" minWidth={88}>
+      <Text bold {...(color ? { color } : {})} {...(n === 0 ? { dimColor: true } : {})}>
+        {String(n)}
+      </Text>
+      <Text dimColor>{label}</Text>
+    </Box>
+  )
+}
+
+/** O cartão da fase no desktop: o anel com o %, o nome e o objetivo, as contagens e o gate inteiro. */
+const RichPhaseCard = (ui: Ui & Required<Pick<Ui, 'Svg'>>, v: View) => {
+  const { Box, Text, Svg } = ui
+  const cur = v.s.current!
+  const p = cur.phase
+  const c = phaseCounts(v.r, p.id)
+  const mine = mineCount(v.r)
+
+  return (
+    <Box key="phase" flexDirection="column" borderStyle="round" borderColor="claude" paddingX={1} paddingY={1} rowGap={1}>
+      <Box flexDirection="row" columnGap={2} alignItems="center">
+        <Svg source={phaseRingSvg(c, cur.pct, 88)} alt={`${c.done} de ${c.total} feitos · ${c.doing} em andamento · ${c.blocked} esperando`} width={88} height={88} />
+        <Box flexDirection="column" rowGap={1} flexGrow={1}>
+          <Box flexDirection="column">
+            <Text bold>{phaseTitle(p)}</Text>
+            {p.goal ? <Text dimColor>{cut(p.goal, 140)}</Text> : undefined}
+          </Box>
+          <Box flexDirection="row" columnGap={2} rowGap={1} flexWrap="wrap">
+            {Count(ui, 'n-done', c.done, 'feitos', 'success')}
+            {Count(ui, 'n-doing', c.doing, 'em andamento', 'claude')}
+            {Count(ui, 'n-blocked', c.blocked, 'esperando', 'inactive')}
+            {Count(ui, 'n-todo', c.todo, 'a fazer')}
+            {mine > 0 ? Count(ui, 'n-mine', mine, 'com você', 'claude') : undefined}
+          </Box>
+        </Box>
+      </Box>
+      {p.gate ? (
+        <Text>
+          <Text color="warning">⚑ Gate </Text>
+          {cut(p.gate, 140)}
+          {p.gateStatus ? <Text dimColor> · {cut(p.gateStatus, 60)}</Text> : ''}
+        </Text>
+      ) : undefined}
+    </Box>
+  )
+}
+
 /** O cartão da fase atual: título, chip do gate, barra com o % e contagens. */
 const PhaseCard = (ui: Ui, v: View, width: number) => {
-  const { Box, Text } = ui
+  const { Box, Text, Svg } = ui
   const cur = v.s.current
+  if (cur && Svg) return RichPhaseCard({ ...ui, Svg }, v)
   if (!cur) {
     return (
       <Box key="phase" borderStyle="round" borderColor="subtle" paddingX={1}>
@@ -512,6 +592,7 @@ const ColumnView = (ui: Ui, col: KanbanColumn, width: number, r: Roadmap, sel: s
   return (
     <Box key={`col-${col.id}`} flexDirection="column" width={width}>
       <Text>
+        {ui.Svg ? <Text {...(color ? { color } : { dimColor: true })}>● </Text> : ''}
         {color ? (
           <Text bold color={color}>
             {col.title}
@@ -618,10 +699,20 @@ const PaneView = (ui: Ui, v: View, width: number, st: PaneState, act: Acts, boar
 
   return (
     <Box flexDirection="column" rowGap={1}>
-      <Box flexDirection="row" columnGap={2} justifyContent="space-between">
-        <Text bold>{r.project ?? b.project}</Text>
-        <Button key="roadmap-reload" label="↻" plain onPress={act.reload} />
-      </Box>
+      {ui.Svg ? (
+        <Box flexDirection="row" columnGap={2} justifyContent="space-between" alignItems="flex-start">
+          <Box flexDirection="column" flexGrow={1}>
+            <Text bold>{r.project ?? b.project}</Text>
+            {r.goal ? <Text dimColor>{cut(r.goal, 160)}</Text> : undefined}
+          </Box>
+          <Button key="roadmap-reload" label="↻ Atualizar" onPress={act.reload} />
+        </Box>
+      ) : (
+        <Box flexDirection="row" columnGap={2} justifyContent="space-between">
+          <Text bold>{r.project ?? b.project}</Text>
+          <Button key="roadmap-reload" label="↻" plain onPress={act.reload} />
+        </Box>
+      )}
       {Trail(ui, s, width)}
       {PhaseCard(ui, v, width)}
       <Box key="filters" flexDirection="row" columnGap={1}>
@@ -730,8 +821,9 @@ export const register: Register = (on, options) => {
       // Sem git: a pasta da sessão é a raiz, e não há aviso de desatualizado.
     }
     where.root = root
-    where.rel = file
-    where.file = isAbsolute(file) ? file : join(root, file)
+    // Com o arquivo padrão, um ROADMAP.md do projeto também vale; com outro, só ele.
+    where.candidates = file === 'docs/roadmap.json' ? [file, ...MARKDOWN_NAMES] : [file]
+    await discover($)
     where.project = root.split(/[\\/]/).filter(Boolean).pop() ?? root
     where.hasGit = hasGit
     await load($, true)
@@ -768,7 +860,7 @@ export const register: Register = (on, options) => {
           'ao terminar (done, com a evidência: commit, arquivo, teste ou resultado), quando ele travar (blocked, com ' +
           'waitingOn) ou para reabrir (todo). "done" sem doneAt usa a data de hoje. "short" troca o rótulo curto do cartão ' +
           'no quadro (até 40 caracteres; "" tira). Com o id de uma fase, muda o estado da fase (done, doing ou todo), o ' +
-          '"short" dela, e "evidence" vira o resultado do gate. Use esta ferramenta em vez de editar o JSON à mão.',
+          '"short" dela, e "evidence" vira o resultado do gate. Use esta ferramenta em vez de editar o arquivo à mão (vale para o JSON e para o ROADMAP.md).',
         inputSchema: {
           type: 'object',
           properties: {
@@ -851,12 +943,12 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'mcp__roadmap__roadmap_update' }, async ($, e) => {
     const input = e as unknown as UpdateInput
-    return change($, (text, day) => applyUpdate(text, input, day), 'Claude atualizou o roadmap')
+    return change($, (text, day) => (isMarkdown(where.file) ? applyUpdateMarkdown : applyUpdate)(text, input, day), 'Claude atualizou o roadmap')
   }).catch(() => ({ deny: 'Não consegui gravar o roadmap.' }))
 
   on('tool.call', { tool: 'mcp__roadmap__roadmap_add' }, async ($, e) => {
     const input = e as unknown as AddInput
-    return change($, (text, day) => applyAdd(text, input, day), 'Claude criou no roadmap')
+    return change($, (text, day) => (isMarkdown(where.file) ? applyAddMarkdown : applyAdd)(text, input, day), 'Claude criou no roadmap')
   }).catch(() => ({ deny: 'Não consegui gravar o roadmap.' }))
 
   on('command.run', { command: 'roadmap' }, async $ => {

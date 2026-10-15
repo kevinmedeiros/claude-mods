@@ -1163,15 +1163,22 @@ test('painel: trilha, cartão da fase, filtro e quadro, sem listas de texto', as
     } else {
       expect(svgs).toEqual(['Fases: 1 Protótipo feita; 2 Beta fechado atual, 16%; 3 Lançamento a fazer', '1 de 6 feitos · 1 em andamento · 1 esperando'])
     }
-    // O cartão da fase atual: título curto, gate, barra segmentada, % e contagens.
-    for (const text of ['Fase 2 · Beta fechado', '⚑ Gate 2 · pendente', '16%', '1 ✓  1 ▶  1 ‖  3 ○']) {
+    // O cartão da fase atual: título curto, gate, barra segmentada, % e contagens; no desktop,
+    // o anel com o %, as contagens com rótulo e o gate inteiro.
+    const phaseTexts =
+      surface === 'terminal'
+        ? ['Fase 2 · Beta fechado', '⚑ Gate 2 · pendente', '16%', '1 ✓  1 ▶  1 ‖  3 ○']
+        : ['Fase 2 · Beta fechado', /^⚑ Gate .+ · pendente/, 'feitos', 'em andamento', 'esperando', 'a fazer', 'com você']
+    for (const text of phaseTexts) {
       expect(await pane.find({ type: 'Text', text }), `${surface}: ${text}`).toBeDefined()
     }
     // O filtro.
     expect((await pane.find({ key: 'filter-all' }))?.props).toMatchObject({ label: 'Tudo', variant: 'primary' })
     expect((await pane.find({ key: 'filter-mine' }))?.props).toMatchObject({ label: 'Comigo 3', dimColor: true })
     // O quadro: 4 colunas, cada uma com o contador, e um cartão por item.
-    for (const text of ['Agora 1', 'Próximas 3', 'Esperando 2', 'Feito 1']) {
+    for (const title of ['Agora 1', 'Próximas 3', 'Esperando 2', 'Feito 1']) {
+      // No desktop, o nome da coluna vem depois de um ponto na cor dela.
+      const text = surface === 'terminal' ? title : `● ${title}`
       expect(await pane.find({ type: 'Text', text }), `${surface}: ${text}`).toBeDefined()
     }
     expect(await cardKeys(pane)).toEqual(['card-login', 'card-modo-escuro', 'card-icone', 'card-pagina', 'card-conta-loja', 'card-convidar-testadores', 'card-sincronizar-notas'])
@@ -1406,10 +1413,11 @@ test('roadmap grande (300 itens): o painel fica curto e a faixa corta o rótulo'
 
     // Antes (0.1.0), com estes mesmos 300 itens: 5342 caracteres de texto no terminal e 5258 no desktop,
     // em 133 textos. Agora (0.2.0): 825 e 607, em 63 e 35 textos; só os cartões que cabem nas colunas.
+    // No desktop (0.3.0), o cartão da fase com rótulos nas contagens e o gate inteiro: 652 e 43.
     const pane = await $.ui.mount({ plugin: 'roadmap', surface, component: 'Pane', requestId: 'roadmap', props: PANE_PROPS })
     const text = shown(await pane.drawn())
     const texts = (await pane.findAll({ type: 'Text' })).length
-    expect([text.length, texts], surface).toEqual(surface === 'terminal' ? [825, 63] : [607, 35])
+    expect([text.length, texts], surface).toEqual(surface === 'terminal' ? [825, 63] : [652, 43])
     // Nada em andamento nesta fase: 0 + 4 + 4 + 3 cartões.
     expect((await cardKeys(pane)).length).toBe(11)
     for (const [key, header] of [

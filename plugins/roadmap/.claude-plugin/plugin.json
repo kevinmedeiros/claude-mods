@@ -1,6 +1,6 @@
 {
   "name": "roadmap",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "O roadmap do projeto num quadro: trilha das fases, kanban do que anda, a fase e o % acima do prompt, e o Claude marcando o que fez",
   "author": { "name": "Kevin Medeiros" },
   "license": "MIT",
@@ -11,7 +11,7 @@
     "file": {
       "type": "string",
       "title": "Arquivo do roadmap",
-      "description": "JSON no formato do mod, relativo à raiz do projeto (git) ou à pasta da sessão",
+      "description": "JSON no formato do mod ou um ROADMAP.md, relativo à raiz do projeto (git) ou à pasta da sessão; no padrão, um ROADMAP.md do projeto também vale",
       "default": "docs/roadmap.json"
     },
     "showBand": {

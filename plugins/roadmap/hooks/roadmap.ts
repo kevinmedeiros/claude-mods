@@ -1092,6 +1092,48 @@ export const segBarSvg = (c: Counts, width: number, height = 8): string => {
   ].join('')
 }
 
+/** Um arco de `from` a `to` (% do círculo, do topo, no sentido horário). */
+const arcPath = (cx: number, cy: number, r: number, from: number, to: number) => {
+  const at = (pct: number) => {
+    const a = (Math.min(pct, 99.99) / 100) * 2 * Math.PI - Math.PI / 2
+    return `${fixed(cx + r * Math.cos(a))} ${fixed(cy + r * Math.sin(a))}`
+  }
+
+  return `M ${at(from)} A ${r} ${r} 0 ${to - from > 50 ? 1 : 0} 1 ${at(to)}`
+}
+
+/**
+ * O anel da fase atual, para o painel no desktop: feito (verde), em andamento (destaque) e
+ * esperando (cinza claro) em volta, o % grande no meio e "N de M" embaixo dele.
+ */
+export const phaseRingSvg = (c: Counts, pct: number, size = 88): string => {
+  const stroke = Math.max(6, Math.round(size / 11))
+  const mid = size / 2
+  const r = mid - stroke / 2 - 1
+  const font = 'font-family="system-ui,-apple-system,Segoe UI,sans-serif"'
+  const at = (n: number) => (c.total > 0 ? (n / c.total) * 100 : 0)
+  const arc = (from: number, to: number, color: string, opacity = 1) =>
+    to - from > 0.1
+      ? `<path d="${arcPath(mid, mid, r, from, to)}" fill="none" stroke="${color}" stroke-opacity="${opacity}" stroke-width="${stroke}"/>`
+      : ''
+  const done = at(c.done)
+  const doing = done + at(c.doing)
+  const blocked = doing + at(c.blocked)
+
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">`,
+    `<circle cx="${mid}" cy="${mid}" r="${fixed(r)}" fill="none" stroke="${HEX.todo}" stroke-opacity="0.22" stroke-width="${stroke}"/>`,
+    c.total > 0 && c.done === c.total
+      ? `<circle cx="${mid}" cy="${mid}" r="${fixed(r)}" fill="none" stroke="${HEX.done}" stroke-width="${stroke}"/>`
+      : arc(0, done, HEX.done),
+    arc(done, doing, HEX.current),
+    arc(doing, blocked, HEX.blocked, 0.45),
+    `<text x="${mid}" y="${fixed(mid + size * 0.04)}" text-anchor="middle" ${font} font-size="${Math.round(size * 0.24)}" font-weight="700" fill="${pct >= 100 ? HEX.done : HEX.accentText}">${pct}%</text>`,
+    `<text x="${mid}" y="${fixed(mid + size * 0.22)}" text-anchor="middle" ${font} font-size="${Math.round(size * 0.12)}" fill="${HEX.text}">${c.done} de ${c.total}</text>`,
+    '</svg>',
+  ].join('')
+}
+
 /** A barrinha da faixa: "▰▰▰▰▱▱▱▱▱▱". */
 export const bandBar = (pct: number, cells = 10) => {
   const n = Math.round((Math.min(100, Math.max(0, pct)) / 100) * cells)
@@ -1427,6 +1469,9 @@ export const missingText = (file: string) =>
       'doneAt (AAAA-MM-DD) e evidence (commit, arquivo, teste) nos feitos, area, gate (true se o item faz parte do gate da fase), notes.',
     '- path: ids dos itens na ordem em que devem ser feitos; os que ficam fora vêm depois, na ordem do arquivo.',
     '- openDecisions[]: title, phase, ref (onde a decisão é discutida).',
+    'Se o projeto prefere Markdown, um ROADMAP.md na raiz também vale: fases como títulos ("## Fase 1 · Protótipo"), itens como ' +
+      '"- [ ] Título @dono" embaixo delas, "- [x]" para feito, e no fim do item "(em andamento)", "(bloqueado: o que espera)", ' +
+      '"(depois de: título de outro item)" ou "(2026-10-02 · evidência)"; "Dono: <nome>" antes da primeira fase.',
   ].join('\n')
 
 // ---------- gravar ----------

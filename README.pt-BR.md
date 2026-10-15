@@ -7,7 +7,7 @@
 [![Licença: MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-blue.svg)](LICENSE)
 [![Plugins do Claude Code](https://img.shields.io/badge/Claude%20Code-plugins-d97757)](https://code.claude.com/docs)
 ![Mods](https://img.shields.io/badge/mods-6-informational)
-![Testes](https://img.shields.io/badge/testes-90%20passando-brightgreen)
+![Testes](https://img.shields.io/badge/testes-95%20passando-brightgreen)
 
 [English](README.md) · [Português](README.pt-BR.md)
 
@@ -120,15 +120,15 @@ A lista do que falta no projeto, num `TASKS.md` na raiz (o mesmo formato da skil
 
 ## roadmap
 
-Em que ponto o projeto está no roadmap, num `docs/roadmap.json` que o Claude atualiza enquanto trabalha.
+Em que ponto o projeto está no roadmap, num `docs/roadmap.json` ou num `ROADMAP.md` simples, com caixinhas, que o Claude atualiza enquanto trabalha.
 
 - **Acima do prompt:** uma linha, *"Fase 2 ▰▰▱▱▱▱▱▱▱▱ 16%  › Login por e-mail (Claude)  comigo: 3"*, com **Fazer** (escreve o pedido para você), **Roadmap** e **Ocultar**. Numa janela estreita, os extras saem antes de o nome da tarefa ser cortado.
-- **`/roadmap`** abre o painel: as fases numa trilha, o cartão da fase atual (barra, %, contagens e gate) e um quadro kanban com *Agora*, *Próximas*, *Esperando* e *Feito*, até quatro cartões por coluna e um *+8 de N* para ver mais, com o filtro *Comigo*. O cartão abre no lugar, com o detalhe e o botão **Fazer agora** (**Ver o que falta** quando ele está bloqueado ou espera outra tarefa). Itens e fases podem ter um rótulo curto (`short`).
+- **`/roadmap`** abre o painel: as fases numa trilha, o cartão da fase atual (no desktop, um anel com o % ao lado do objetivo da fase, as contagens com rótulo e o gate inteiro; no terminal, barra, % e contagens) e um quadro kanban com *Agora*, *Próximas*, *Esperando* e *Feito*, até quatro cartões por coluna e um *+8 de N* para ver mais, com o filtro *Comigo*. O cartão abre no lugar, com o detalhe e o botão **Fazer agora** (**Ver o que falta** quando ele está bloqueado ou espera outra tarefa). Itens e fases podem ter um rótulo curto (`short`).
 - **Aviso de desatualizado.** Quando o projeto passa de 10 commits sem mexer no roadmap, a faixa e o painel avisam.
 - **O Claude mantém o roadmap em dia.** Ele ganha as ferramentas `roadmap_status`, `roadmap_update` e `roadmap_add`: marca o que terminou com a evidência (um commit, um teste, um arquivo) e cria os itens que surgirem, sempre com aviso na tela. O `roadmap_status` acha o id de qualquer item por palavras do título, e depois de cada `git commit` o Claude é lembrado de marcar o que o commit terminou. Desligue as ferramentas de escrita em `claudeCanEdit`.
 - **Linha de status** com a fase e o %.
 
-O formato do arquivo, com um exemplo, está no [README do mod](plugins/roadmap/README.md) (em inglês).
+Os dois formatos, com exemplos, estão no [README do mod](plugins/roadmap/README.md) (em inglês). No `ROADMAP.md`, as fases são títulos `## Fase 1 · Nome` e os itens são caixinhas com `@Dono`, `(em andamento)`, `(bloqueado: …)` e `(depois de: …)`; o Claude só reescreve a linha do item que ele marca.
 
 | Opção | Padrão |
 |---|---|
@@ -188,7 +188,7 @@ Funciona com o Blender conectado ao Claude Code por um servidor MCP do Blender.
 
 Tudo fica na sua máquina.
 
-- **Arquivos locais.** Os mods gravam em `~/.claude/usage-limits/`, no armazenamento de cada plugin e em `.claude/handoff.md`, `TASKS.md` e `docs/roadmap.json` no seu projeto.
+- **Arquivos locais.** Os mods gravam em `~/.claude/usage-limits/`, no armazenamento de cada plugin e em `.claude/handoff.md`, `TASKS.md` e `docs/roadmap.json` (ou `ROADMAP.md`) no seu projeto.
 - **Requisições de rede:**
   - o `usage-limits` chama a API de custo do Console, e só se você configurar uma Admin key;
   - o `fluxo` chama o Claude Haiku 5.5 quando você roda `/handoff`;
