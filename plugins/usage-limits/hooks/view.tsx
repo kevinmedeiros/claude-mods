@@ -26,7 +26,7 @@ type RichUi = Pick<Elements['desktop'], 'Box' | 'Text' | 'Svg' | 'Button'>
 /** Caixas, texto e botões: o que todas as superfícies desenham. */
 type BasicUi = Pick<TerminalUi, 'Box' | 'Text' | 'Button'>
 
-export type ViewData = { snap: Snapshot; totals: Totals; economy: boolean; api: ApiSpend | null }
+export type ViewData = { snap: Snapshot; totals: Totals; economy: boolean; api: ApiSpend | null; collapsed?: boolean }
 
 /** O que os botões fazem; `details` só existe fora do painel. */
 export type Actions = {
@@ -34,6 +34,8 @@ export type Actions = {
   /** ↻ Atualizar: relê a leitura mais nova e recalcula tudo. */
   reload?: () => void
   toggleEconomy: () => void
+  /** Minimiza ou expande a faixa acima do prompt. */
+  toggleBand?: () => void
   fillModel: (alias: string) => void
 }
 
@@ -52,6 +54,7 @@ export const colorOf = (w: WindowView) =>
         : 'subtle'
 
 const verdictText = (w: WindowView, now: number): string => {
+  if (w.isRenewed) return '↺ Renovou: o uso novo aparece na próxima resposta do Claude'
   switch (w.verdict) {
     case 'exhausted':
       return `⛔ Esgotado — volta às ${w.resetsAt ? clockTime(w.resetsAt, now) : '?'}`
@@ -216,10 +219,13 @@ const ApiCard = (ui: BasicUi, spend: ApiSpend | null, now: number) => {
 /** "3 sessões · 4.2M tokens · US$ 12,40" ou, sozinha, os números desta. */
 const usageSummary = (snap: Snapshot, totals: Totals, api: ApiSpend | null) => {
   const all = snap.sessions?.total
-  const head =
+  // Sessões gravadas por versões antigas do mod têm custo mas 0 tokens: sem tokens, só o custo.
+  const tokens = (n: number) => (n > 0 ? [`${compact(n)} tokens`] : [])
+  const head = (
     all && all.count > 1
-      ? `${all.count} sessões · ${compact(totalTokens(all.tokens))} tokens · ${usd(all.costUsd)}`
-      : `${compact(totalTokens(totals))} tokens${snap.costUsd !== undefined ? ` · ${usd(snap.costUsd)}` : ''}`
+      ? [`${all.count} sessões`, ...tokens(totalTokens(all.tokens)), usd(all.costUsd)]
+      : [...tokens(totalTokens(totals)), ...(snap.costUsd !== undefined ? [usd(snap.costUsd)] : [])]
+  ).join(' · ')
 
   return api && !api.problem ? `${head} · API ${usd(api.spentUsd)}/${Math.round(api.creditUsd)}` : head
 }
@@ -311,21 +317,6 @@ const AdviceCard = (ui: BasicUi, a: Advice | undefined, economy: boolean, action
       <Text dimColor>
         Estimativa pelo preço de API de cada modelo; a assinatura pode pesar os modelos de outro jeito.
       </Text>
-    </Box>
-  )
-}
-
-/** A linha de recomendação das faixas acima do prompt. */
-const AdviceLine = (ui: BasicUi, a: Advice | undefined, economy: boolean, actions: Actions) => {
-  const { Box, Text } = ui
-  if (a === undefined) return AdviceButtons(ui, a, economy, actions, false)
-
-  return (
-    <Box key="advice" flexDirection="column">
-      <Text color={adviceColor(a)} dimColor={a.isFine}>
-        {economy && !a.isFine ? `${a.headline} (economia ligada)` : a.headline}
-      </Text>
-      {AdviceButtons(ui, a, economy, actions, false)}
     </Box>
   )
 }
@@ -428,7 +419,9 @@ export const RichPane = (ui: RichUi, data: ViewData, columns: number, actions: A
       <Box flexDirection="row" justifyContent="space-between">
         <Text bold>Limites de uso</Text>
         <Box flexDirection="row" columnGap={2} alignItems="center">
-          <Text dimColor>{freshness(snap)}</Text>
+          <Text color={isStale(snap) ? 'warning' : undefined} dimColor={!isStale(snap)}>
+            {freshness(snap)}
+          </Text>
           {actions.reload && <Button key="reload-top" label="↻ Atualizar" onPress={actions.reload} />}
         </Box>
       </Box>
@@ -444,75 +437,7 @@ export const RichPane = (ui: RichUi, data: ViewData, columns: number, actions: A
   )
 }
 
-/** Faixa compacta acima do prompt no desktop. */
-export const RichBand = (ui: RichUi, data: ViewData, actions: Actions) => {
-  const { Box, Text, Svg } = ui
-  const { snap, totals } = data
-  const now = snap.updatedAt
-
-  return (
-    <Box flexDirection="column">
-    <Box flexDirection="row" columnGap={3} alignItems="center" flexWrap="wrap">
-      {snap.windows.map(w => (
-        <Box key={w.kind} flexDirection="row" columnGap={1} alignItems="center">
-          <Text bold>{shortLabel(w.kind)}</Text>
-          <Svg
-            source={limitBarSvg(w, now, 90, { height: 12 })}
-            alt={`${w.label}: ${percent(w.pct)} usado`}
-            width={90}
-            height={12}
-          />
-          <Text bold color={colorOf(w)}>
-            {percent(w.pct)}
-          </Text>
-          <Text dimColor>
-            dura {durationText(w)}
-            {w.workHoursLeft !== undefined ? ` (~${hours(w.workHoursLeft)} de uso)` : ''} · reset{' '}
-            {w.resetsAt === undefined ? '—' : hours((w.msToReset ?? 0) / HOUR)}
-          </Text>
-        </Box>
-      ))}
-      <Text dimColor>
-        {usageSummary(snap, totals, data.api)}
-        {readingAge(snap.readAt, now) !== undefined && ` · leitura ${readingAge(snap.readAt, now)}`}
-      </Text>
-    </Box>
-    {AdviceLine(ui, snap.advice, data.economy, actions)}
-    </Box>
-  )
-}
-
 // ---------- terminal ----------
-
-/** Faixa acima do prompt no terminal: um item por limite, quebrando linha se faltar largura. */
-export const TerminalBand = (ui: TerminalUi, { snap, totals, economy, api }: ViewData, actions: Actions) => {
-  const { Box, Text } = ui
-
-  return (
-    <Box flexDirection="column">
-    <Box flexDirection="row" columnGap={3} flexWrap="wrap">
-      {snap.windows.map(w => (
-        <Text key={w.kind}>
-          <Text bold>{shortLabel(w.kind)}</Text> <Text color={colorOf(w)}>{bar(w.pct, 8)}</Text>{' '}
-          <Text bold color={colorOf(w)}>
-            {percent(w.pct)}
-          </Text>{' '}
-          <Text dimColor>
-            dura {durationText(w)}
-            {w.workHoursLeft !== undefined ? ` (~${hours(w.workHoursLeft)} de uso)` : ''} · reset{' '}
-            {w.resetsAt === undefined ? '—' : hours((w.msToReset ?? 0) / HOUR)}
-          </Text>
-        </Text>
-      ))}
-      <Text key="session" dimColor>
-        {usageSummary(snap, totals, api)}
-        {readingAge(snap.readAt, snap.updatedAt) !== undefined && ` · leitura ${readingAge(snap.readAt, snap.updatedAt)}`} · /limites
-      </Text>
-    </Box>
-    {AdviceLine(ui, snap.advice, economy, { ...actions, details: undefined })}
-    </Box>
-  )
-}
 
 /** Painel `/limites` no terminal: só texto. */
 export const TerminalPane = (ui: TerminalUi, { snap, totals, economy, api }: ViewData, columns: number, actions: Actions) => {
@@ -576,6 +501,239 @@ export const TerminalPane = (ui: TerminalUi, { snap, totals, economy, api }: Vie
           {snap.costUsd !== undefined && ` · custo ${usd(snap.costUsd)}`}
           {snap.contextPercent !== undefined && ` · contexto ${snap.contextPercent}%`}
         </Text>
+      </Box>
+    </Box>
+  )
+}
+
+// ---------- faixa acima do prompt (desktop e terminal) ----------
+
+/** Leitura com mais de 2h: os números podem estar bem atrás da conta. */
+const STALE_MS = 2 * HOUR
+
+const isStale = (snap: Snapshot) => snap.readAt !== undefined && snap.updatedAt - snap.readAt > STALE_MS
+
+/** "Semana" na faixa do desktop, que tem espaço; "Sem" no terminal. */
+const bandLabel = (kind: string, isWide: boolean) =>
+  isWide && kind === 'seven_day' ? 'Semana' : shortLabel(kind)
+
+/** O que vem depois do %: quanto dura e quando renova, sem repetir o óbvio. */
+export const bandDetail = (w: WindowView, now: number): string => {
+  const renews = w.resetsAt === undefined ? '' : `renova ${clockTime(w.resetsAt, now)}`
+  if (w.isRenewed) return 'renovado'
+  if (w.verdict === 'exhausted') return `esgotado · volta ${clockTime(w.resetsAt ?? now, now)}`
+  const toReset = (w.msToReset ?? 0) / HOUR
+  const lasts =
+    w.ratePerHour === undefined
+      ? undefined
+      : w.hoursLeft === undefined
+        ? 'parado'
+        : w.verdict === 'exhausts'
+          ? `acaba em ~${hours(w.hoursLeft)}`
+          : w.hoursLeft >= toReset
+            ? 'dura até renovar'
+            : `dura ~${hours(w.hoursLeft)}`
+
+  return [lasts, renews].filter(Boolean).join(' · ')
+}
+
+/** Marca curta da faixa minimizada. */
+const mark = (w: WindowView) =>
+  w.verdict === 'exhausted' ? ' ⛔' : w.verdict === 'exhausts' ? ' ⚠' : w.verdict === 'tight' ? ' △' : ''
+
+/** "2 sessões · 4,2M tokens · US$ 12,40" e, se for o caso, de quando é a leitura. */
+const metaLine = (data: ViewData) => {
+  const { snap, totals, api } = data
+  const age = readingAge(snap.readAt, snap.updatedAt)
+
+  return {
+    text: usageSummary(snap, totals, api),
+    age: age ? `leitura ${age}${isStale(snap) ? ': atualiza na próxima resposta' : ''}` : undefined,
+  }
+}
+
+/**
+ * A recomendação só aparece na faixa quando um limite acaba antes de renovar e
+ * a leitura é recente; o texto inteiro fica em Detalhes.
+ */
+const bandAdvice = (data: ViewData) => {
+  const a = data.snap.advice
+  const w = data.snap.windows.find(v => v.kind === a?.windowKind)
+  if (!a || !w || w.verdict !== 'exhausts' || isStale(data.snap)) return undefined
+  const when = w.exhaustAt !== undefined ? ` ~${clockTime(w.exhaustAt, data.snap.updatedAt)}` : ''
+
+  return { advice: a, text: `⚠ ${w.label} acaba${when}, antes de renovar` }
+}
+
+/** Botões da recomendação que mudam algo agora. */
+const adviceActions = (ui: BasicUi, a: Advice, economy: boolean, actions: Actions) => {
+  const { Button } = ui
+  const buttons = []
+  if (!economy && usesSubHaiku(a.pick)) {
+    buttons.push(<Button key="economy-on" label="Haiku nos subagentes" variant="primary" onPress={actions.toggleEconomy} />)
+  }
+  if (changesMain(a.pick, a.mainModel)) {
+    buttons.push(<Button key="model-sonnet" label="/model sonnet" onPress={() => actions.fillModel('sonnet')} />)
+  }
+  if (a.pick === 'all-haiku') {
+    buttons.push(<Button key="model-haiku" label="/model haiku" onPress={() => actions.fillModel('haiku')} />)
+  }
+  return buttons
+}
+
+/** Os controles à direita: economia, atualizar, detalhes e minimizar. */
+const bandControls = (ui: BasicUi, economy: boolean, actions: Actions, collapsed: boolean) => {
+  const { Box, Button } = ui
+
+  return (
+    <Box key="controls" flexDirection="row" columnGap={1} alignItems="center">
+      {economy && !collapsed && (
+        <Button key="economy-off" label="Economia ligada ✕" plain onPress={actions.toggleEconomy} />
+      )}
+      {actions.reload && !collapsed && <Button key="reload" label="↻" plain onPress={actions.reload} />}
+      {actions.details && !collapsed && <Button key="details" label="Detalhes" plain onPress={actions.details} />}
+      {actions.toggleBand && (
+        <Button
+          key={collapsed ? 'band-expand' : 'band-collapse'}
+          label={collapsed ? '▴' : '▾'}
+          plain
+          onPress={actions.toggleBand}
+        />
+      )}
+    </Box>
+  )
+}
+
+/** Faixa minimizada: uma linha com os % e o botão de expandir. */
+const CollapsedBand = (ui: BasicUi, data: ViewData, actions: Actions, isWide: boolean) => {
+  const { Box, Text } = ui
+  const { snap } = data
+  const all = snap.sessions?.total
+
+  return (
+    <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={2}>
+      <Box flexDirection="row" columnGap={2} alignItems="center">
+        {snap.windows.map(w => (
+          <Text key={w.kind}>
+            <Text dimColor>{bandLabel(w.kind, isWide)}</Text>{' '}
+            <Text bold color={w.isRenewed ? 'subtle' : colorOf(w)}>
+              {percent(w.pct)}
+              {mark(w)}
+            </Text>
+          </Text>
+        ))}
+        {all && all.count > 1 && (
+          <Text key="cost" dimColor>
+            {usd(all.costUsd)}
+          </Text>
+        )}
+        {isStale(snap) && (
+          <Text key="stale" color="warning">
+            leitura {readingAge(snap.readAt, snap.updatedAt)}
+          </Text>
+        )}
+      </Box>
+      {bandControls(ui, data.economy, actions, true)}
+    </Box>
+  )
+}
+
+/** Faixa acima do prompt no desktop: uma linha por assunto, controles à direita. */
+export const RichBand = (ui: RichUi, data: ViewData, actions: Actions) => {
+  if (data.collapsed) return CollapsedBand(ui, data, actions, true)
+  const { Box, Text, Svg } = ui
+  const { snap } = data
+  const now = snap.updatedAt
+  const meta = metaLine(data)
+  const advice = bandAdvice(data)
+
+  return (
+    <Box flexDirection="column" rowGap={0}>
+      <Box flexDirection="row" columnGap={2}>
+        <Box flexDirection="row" columnGap={4} rowGap={0} alignItems="center" flexWrap="wrap">
+          {snap.windows.map(w => (
+            <Box key={w.kind} flexDirection="row" columnGap={1} alignItems="center">
+              <Text bold>{bandLabel(w.kind, true)}</Text>
+              <Svg
+                source={limitBarSvg(w, now, 72, { height: 10 })}
+                alt={`${w.label}: ${percent(w.pct)} usado`}
+                width={72}
+                height={10}
+              />
+              <Text bold color={w.isRenewed ? 'subtle' : colorOf(w)}>
+                {percent(w.pct)}
+              </Text>
+              <Text dimColor>{bandDetail(w, now)}</Text>
+            </Box>
+          ))}
+        </Box>
+      </Box>
+      {advice && (
+        <Box key="advice" flexDirection="row" columnGap={2} alignItems="center" flexWrap="wrap">
+          <Text color="error">{advice.text}</Text>
+          {adviceActions(ui, advice.advice, data.economy, actions)}
+        </Box>
+      )}
+      <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={2}>
+        <Text dimColor>
+          {meta.text}
+          {meta.age !== undefined && (
+            <Text color={isStale(snap) ? 'warning' : undefined} dimColor={!isStale(snap)}>
+              {' · '}
+              {meta.age}
+            </Text>
+          )}
+        </Text>
+        {bandControls(ui, data.economy, actions, false)}
+      </Box>
+    </Box>
+  )
+}
+
+/** Faixa acima do prompt no terminal: o mesmo desenho, com barras de texto. */
+export const TerminalBand = (ui: TerminalUi, data: ViewData, actions: Actions) => {
+  const term = { ...actions, details: undefined }
+  if (data.collapsed) return CollapsedBand(ui, data, term, false)
+  const { Box, Text } = ui
+  const { snap } = data
+  const now = snap.updatedAt
+  const meta = metaLine(data)
+  const advice = bandAdvice(data)
+
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row" justifyContent="space-between" columnGap={2}>
+        <Box flexDirection="row" columnGap={3} flexWrap="wrap">
+          {snap.windows.map(w => (
+            <Text key={w.kind}>
+              <Text bold>{bandLabel(w.kind, false)}</Text>{' '}
+              <Text color={w.isRenewed ? 'subtle' : colorOf(w)}>{bar(w.pct, 8)}</Text>{' '}
+              <Text bold color={w.isRenewed ? 'subtle' : colorOf(w)}>
+                {percent(w.pct)}
+              </Text>{' '}
+              <Text dimColor>{bandDetail(w, now)}</Text>
+            </Text>
+          ))}
+        </Box>
+      </Box>
+      {advice && (
+        <Box key="advice" flexDirection="row" columnGap={2} flexWrap="wrap">
+          <Text color="error">{advice.text}</Text>
+          {adviceActions(ui, advice.advice, data.economy, term)}
+        </Box>
+      )}
+      <Box flexDirection="row" columnGap={2}>
+        <Text dimColor>
+          {meta.text}
+          {meta.age !== undefined && (
+            <Text color={isStale(snap) ? 'warning' : undefined} dimColor={!isStale(snap)}>
+              {' · '}
+              {meta.age}
+            </Text>
+          )}
+          {' · /limites'}
+        </Text>
+        {bandControls(ui, data.economy, term, false)}
       </Box>
     </Box>
   )

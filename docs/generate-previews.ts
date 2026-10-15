@@ -17,6 +17,14 @@ const week = project({ kind: 'seven_day', percentUsed: 41, resetsAt: new Date(NO
 const h = (ms: number) => hours(ms / HOUR)
 const fiveLeft = `~${hours(five.hoursLeft ?? 0)}`
 const weekLeft = `~${hours(week.hoursLeft ?? 0)}`
+
+/** The band's text after the %, as the mod's bandDetail draws it. */
+const bandText = (w: typeof five) => {
+  const left = w.hoursLeft ?? 0
+  const lasts =
+    w.verdict === 'exhausts' ? `acaba em ~${hours(left)}` : left >= (w.msToReset ?? 0) / HOUR ? 'dura até renovar' : `dura ~${hours(left)}`
+  return `${lasts} · renova ${clockTime(w.resetsAt ?? NOW, NOW)}`
+}
 const fiveColor = five.verdict === 'ok' ? '#3fb950' : '#d29922'
 const weekColor = week.verdict === 'exhausts' ? '#f85149' : week.verdict === 'tight' ? '#d29922' : '#3fb950'
 const weekVerdict =
@@ -46,29 +54,32 @@ const R = '#f85149'
 const DIM = '#8b949e'
 
 const terminal = [
-  `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="300" viewBox="0 0 1000 300">`,
-  `<rect width="1000" height="300" rx="10" fill="#0d1117"/>`,
+  `<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="244" viewBox="0 0 1000 244">`,
+  `<rect width="1000" height="244" rx="10" fill="#0d1117"/>`,
   `<rect width="1000" height="32" rx="10" fill="#161b22"/><rect y="22" width="1000" height="10" fill="#161b22"/>`,
   `<circle cx="20" cy="16" r="6" fill="#ff5f57"/><circle cx="40" cy="16" r="6" fill="#febc2e"/><circle cx="60" cy="16" r="6" fill="#28c840"/>`,
   `<text x="500" y="21" text-anchor="middle" font-family="${SANS}" font-size="12" fill="${DIM}">claude — my-game</text>`,
   line(66, [
     { text: '5h ', bold: true }, { text: '███░░░░░', color: fiveColor }, { text: ' 38% ', color: fiveColor, bold: true },
-    { text: `dura ${fiveLeft} · reset ${h(five.msToReset ?? 0)}   `, color: DIM },
+    { text: `${bandText(five)}   `, color: DIM },
     { text: 'Sem ', bold: true }, { text: '███░░░░░', color: weekColor }, { text: ' 41% ', color: weekColor, bold: true },
-    { text: `dura ${weekLeft} · reset ${h(week.msToReset ?? 0)}`, color: DIM },
+    { text: bandText(week), color: DIM },
   ]),
-  line(86, [{ text: '3 sessões · 6.3M tokens · US$ 9,91 · API US$ 37/200 · /limites', color: DIM }]),
-  line(112, [{ text: '💡 Você está usando Opus 5.5 e 64% do gasto vem de subagentes em Opus 5.5. Para não ficar', color: Y }]),
-  line(130, [{ text: '   sem uso, use Opus 5.5 para orquestrar e Haiku para executar: o limite semanal passa a', color: Y }]),
-  line(148, [{ text: '   durar ~140h e seu plano dura até o reset (~82% no fim).', color: Y }]),
-  line(172, [{ text: '[ Haiku nos subagentes ]', color: '#58a6ff', bold: true }, { text: '   ↻ Atualizar', color: DIM }]),
-  `<line x1="24" y1="196" x2="976" y2="196" stroke="#30363d"/>`,
-  line(220, [{ text: '❯ ', color: '#d2a8ff' }, { text: 'Implement the dodge window and run the EditMode tests', color: '#c9d1d9' }]),
-  `<line x1="24" y1="238" x2="976" y2="238" stroke="#30363d"/>`,
-  line(262, [
+  line(90, [
+    { text: `⚠ Semanal acaba ~${clockTime(week.exhaustAt ?? NOW, NOW)}, antes de renovar  `, color: R },
+    { text: '[ Haiku nos subagentes ]', color: '#58a6ff', bold: true },
+  ]),
+  line(114, [
+    { text: '3 sessões · 6.3M tokens · US$ 9,91 · API US$ 37/200 · /limites  ', color: DIM },
+    { text: '↻  ▾', color: '#c9d1d9' },
+  ]),
+  `<line x1="24" y1="138" x2="976" y2="138" stroke="#30363d"/>`,
+  line(162, [{ text: '❯ ', color: '#d2a8ff' }, { text: 'Implement the dodge window and run the EditMode tests', color: '#c9d1d9' }]),
+  `<line x1="24" y1="180" x2="976" y2="180" stroke="#30363d"/>`,
+  line(204, [
     { text: `  ${statusPart(five)} │ ${statusPart(week)} │ 3 sessões · 6.3M tok · US$ 9,91`, color: DIM },
   ]),
-  line(282, [{ text: '  Unity · ✓ compila · EditMode 15/15 ✓', color: G }]),
+  line(224, [{ text: '  Unity · ✓ compila · EditMode 15/15 ✓', color: G }]),
   `</svg>`,
 ].join('\n')
 

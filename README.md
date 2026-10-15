@@ -7,11 +7,11 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Claude Code plugins](https://img.shields.io/badge/Claude%20Code-plugins-d97757)](https://code.claude.com/docs)
 ![Mods](https://img.shields.io/badge/mods-6-informational)
-![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-90%20passing-brightgreen)
 
 [English](README.md) · [Português](README.pt-BR.md)
 
-<img src="docs/terminal.svg" alt="Claude Code in a terminal: a band above the prompt shows the 5-hour limit at 38% lasting ~4.7h and the weekly limit at 41% lasting ~52h, three open sessions with tokens and cost, a model recommendation, and a Unity status line" width="100%">
+<img src="docs/terminal.svg" alt="Claude Code in a terminal: a band above the prompt shows the 5-hour limit at 38% lasting until it renews and the weekly limit at 41% running out in ~52h, a warning with a one-click fix, three open sessions with tokens and cost, and a Unity status line" width="100%">
 
 </div>
 
@@ -56,7 +56,8 @@ Update with `/plugin update <mod>`; change options with `/plugin` → the mod �
 
 The percentages come from Anthropic's own rate-limit headers, so they cover **the whole account**: every session, every machine, and claude.ai. On top of them the mod answers the question the usage page doesn't: *will this last until the reset?*
 
-- **Status line and a band above the prompt** with each limit's %, how many hours it lasts at the current pace, time to reset, and tokens and cost across all open sessions.
+- **Status line and a band above the prompt** with each limit's %, how long it lasts at the current pace (or *lasts until it renews*), when it renews, and tokens and cost across all open sessions. A warning line appears only when a limit runs out before it renews, with the fix as a button.
+- **▾ Minimize** folds the band into one line (`5h 2%  Sem 91% △`); **▴** brings it back. The choice sticks across sessions.
 - **`/limites` pane** with bars that show used, projected-to-reset and an even-pace marker, plus the 5-hour pace, the weekly pace in points per day, and how many hours of work are left at the last hour's pace.
 - **Every open session** on the machine, with project, model, tokens, cost and share of the total, plus today's total.
 - **Per-project spend** for each window, so you know which project is burning the week.

@@ -144,6 +144,8 @@ export type WindowView = {
   /** % projetado no momento do reset. */
   pctAtReset?: number
   verdict: Verdict
+  /** A leitura é de antes do reset: a janela já renovou, o uso é 0 até a próxima resposta. */
+  isRenewed?: boolean
   /** Tokens contados nesta janela (todas as sessões com o mod). */
   windowTokens?: number
   /** Tokens por 1% do limite, medido nesta janela. */
@@ -177,6 +179,8 @@ declare module 'claude-code' {
       setup: Setup
       project: string
       api: ApiSpend | null
+      /** Faixa acima do prompt minimizada numa linha. */
+      bandCollapsed: boolean
     }
   }
 }

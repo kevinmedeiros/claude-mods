@@ -40,6 +40,8 @@ const economy = atom({ plugin: 'usage-limits', key: 'economy' } as const, false)
 const setup = atom({ plugin: 'usage-limits', key: 'setup' } as const, {})
 const currentProject = atom({ plugin: 'usage-limits', key: 'project' } as const, '')
 const api = atom({ plugin: 'usage-limits', key: 'api' } as const, null)
+const bandCollapsed = atom({ plugin: 'usage-limits', key: 'bandCollapsed' } as const, false)
+const BAND_KEY = 'band-collapsed'
 
 type Alerts = { resetsAt: number; sent: string[] }
 
@@ -374,6 +376,29 @@ const findProject = async ($: EngineInterface, cwd: string) => {
   }
 }
 
+/** Soma uma chamada ao modelo (principal ou subagente) aos totais da sessão e das janelas. */
+const addTotals = async ($: EngineInterface, usage: TurnUsage) => {
+  const add = {
+    input: usage.input_tokens,
+    output: usage.output_tokens,
+    cacheRead: usage.cache_read_input_tokens,
+    cacheWrite: usage.cache_creation_input_tokens,
+  }
+  await update($, session, t => ({
+    input: t.input + add.input,
+    output: t.output + add.output,
+    cacheRead: t.cacheRead + add.cacheRead,
+    cacheWrite: t.cacheWrite + add.cacheWrite,
+    turns: t.turns,
+  }))
+  await countTokens($, add.input + add.output + add.cacheRead + add.cacheWrite)
+}
+
+const setCollapsed = async ($: EngineInterface, collapsed: boolean) => {
+  await update($, bandCollapsed, () => collapsed)
+  await $.store.set(BAND_KEY, collapsed)
+}
+
 const setEconomy = async ($: EngineInterface, on: boolean) => {
   await update($, economy, () => on)
   await $.store.set(ECONOMY_KEY, on)
@@ -405,6 +430,7 @@ const actionsFor = ($: EngineInterface, withDetails: boolean): Actions => ({
   details: withDetails ? () => void $.ui.open({ id: PANE, title: 'Limites' }) : undefined,
   reload: () => void reloadAll($),
   toggleEconomy: () => void read($, economy).then(on => setEconomy($, !on)),
+  toggleBand: () => void read($, bandCollapsed).then(c => setCollapsed($, !c)),
   fillModel: alias => void $.prompt.fill({ text: `/model ${alias}` }),
 })
 
@@ -413,6 +439,7 @@ const viewData = async ($: EngineInterface, snap: Snapshot): Promise<ViewData> =
   totals: await read($, session),
   economy: await read($, economy),
   api: await read($, api),
+  collapsed: await read($, bandCollapsed),
 })
 
 export const register: Register = (on, options) => {
@@ -443,6 +470,8 @@ export const register: Register = (on, options) => {
       description: 'Liga/desliga o modo economia: o principal orquestra, subagentes executam em Haiku',
     })
     const isEconomy = (await $.store.get(ECONOMY_KEY)) === true
+    const isCollapsed = (await $.store.get(BAND_KEY)) === true
+    await update($, bandCollapsed, () => isCollapsed)
     await update($, economy, () => isEconomy)
     // O modelo da sessão já ao abrir, para a recomendação não dizer "o modelo atual".
     try {
@@ -498,6 +527,7 @@ export const register: Register = (on, options) => {
 
     const result = yield* next(step)
     if (result.usage) {
+      await addTotals($, result.usage)
       await countMix($, e.agentId ? 'sub' : 'main', result.usage)
       await countProject($, result.usage)
       await countRecent($, e.agentId ? 'sub' : 'main', result.usage)
@@ -506,25 +536,12 @@ export const register: Register = (on, options) => {
     return result
   })
 
+  // Os tokens já foram somados a cada chamada (turn.step); aqui conta o turno e
+  // grava o livro de sessões. O `usage` do fim do turno nem sempre vem.
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    const usage = e.usage
-    if (usage) {
-      const add: Totals = {
-        input: usage.input_tokens,
-        output: usage.output_tokens,
-        cacheRead: usage.cache_read_input_tokens,
-        cacheWrite: usage.cache_creation_input_tokens,
-        turns: e.agentId ? 0 : 1,
-      }
-      const totals = await update($, session, t => ({
-        input: t.input + add.input,
-        output: t.output + add.output,
-        cacheRead: t.cacheRead + add.cacheRead,
-        cacheWrite: t.cacheWrite + add.cacheWrite,
-        turns: t.turns + add.turns,
-      }))
-      await countTokens($, totalTokens(add))
+    if (!e.agentId) {
+      const totals = await update($, session, t => ({ ...t, turns: t.turns + 1 }))
       const last = await read($, snapshot)
       await writeSelf($, last?.costUsd)
       $.ui.status(

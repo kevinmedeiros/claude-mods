@@ -7,11 +7,11 @@
 [![Licença: MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-blue.svg)](LICENSE)
 [![Plugins do Claude Code](https://img.shields.io/badge/Claude%20Code-plugins-d97757)](https://code.claude.com/docs)
 ![Mods](https://img.shields.io/badge/mods-6-informational)
-![Testes](https://img.shields.io/badge/testes-88%20passando-brightgreen)
+![Testes](https://img.shields.io/badge/testes-90%20passando-brightgreen)
 
 [English](README.md) · [Português](README.pt-BR.md)
 
-<img src="docs/terminal.svg" alt="Claude Code no terminal: uma faixa acima do prompt mostra o limite de 5h em 38% durando ~4,7h e o semanal em 41% durando ~52h, três sessões abertas com tokens e custo, uma recomendação de modelo e a linha de status do Unity" width="100%">
+<img src="docs/terminal.svg" alt="Claude Code no terminal: uma faixa acima do prompt mostra o limite de 5h em 38% durando até renovar e o semanal em 41% acabando em ~52h, um aviso com a correção em um clique, três sessões abertas com tokens e custo e a linha de status do Unity" width="100%">
 
 </div>
 
@@ -53,7 +53,8 @@ Atualize com `/plugin update <mod>`; ajuste as opções em `/plugin` → o mod �
 
 Os percentuais vêm dos próprios cabeçalhos de limite da Anthropic, então valem para **a conta inteira**: todas as sessões, todas as máquinas e o claude.ai. Em cima deles o mod responde o que a página de uso não responde: *isso dura até o reset?*
 
-- **Linha de status e faixa acima do prompt** com o % de cada limite, quantas horas ele dura no ritmo atual, tempo até o reset, e tokens e custo de todas as sessões abertas.
+- **Linha de status e faixa acima do prompt** com o % de cada limite, quanto ele dura no ritmo atual (ou *dura até renovar*), quando renova, e tokens e custo de todas as sessões abertas. Uma linha de aviso só aparece quando um limite acaba antes de renovar, com a correção num botão.
+- **▾ Minimizar** recolhe a faixa numa linha (`5h 2%  Sem 91% △`); **▴** traz de volta. A escolha vale para as próximas sessões.
 - **Painel `/limites`** com barras de uso, projeção até o reset e marcador de ritmo uniforme. Mostra também o ritmo do 5h, o ritmo semanal em pontos por dia e quantas horas de trabalho restam no ritmo da última hora.
 - **Todas as sessões abertas** na máquina, com projeto, modelo, tokens, custo e fatia do total, mais o total do dia.
 - **Gasto por projeto** em cada janela, para saber qual projeto está queimando a semana.

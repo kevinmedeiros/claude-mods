@@ -7,6 +7,7 @@ import { costReportUrl, cycleBounds, projectApi, sumCostReport } from '../hooks/
 import { sessionsView, upsertSession } from '../hooks/sessions'
 import type { Calibration } from '../hooks/pace'
 import { HOUR, MINUTE, addSample, emptyTotals, project, projectName, projectShares, statusLine, statusPart } from '../hooks/projection'
+import { bandDetail } from '../hooks/view'
 
 const NOW = Date.parse('2026-10-08T12:00:00Z')
 const iso = (t: number) => new Date(t).toISOString()
@@ -67,7 +68,7 @@ test('session.measure atualiza o estado, a linha de status e avisa', async ($, o
     changed: ['rateLimits'],
   })
 
-  expect(statuses.at(-1)).toMatch(/^5h 85% dura ~0,4h ⚠ │ Sem 20% dura ~192h ✓ │ 0 tok$/)
+  expect(statuses.at(-1)).toMatch(/^5h 85% dura ~0,4h ⚠ │ Sem 20% até renovar ✓$/)
   expect(toasts.some(t => t.includes('em 85%'))).toBe(true)
   expect(toasts.some(t => t.includes('No ritmo atual'))).toBe(true)
 
@@ -81,32 +82,34 @@ test('session.measure atualiza o estado, a linha de status e avisa', async ($, o
   expect(toasts.length).toBe(before)
 })
 
-test('turn.complete soma os tokens da sessão', async ($, on) => {
+test('cada chamada ao modelo soma os tokens da sessão, mesmo sem usage no fim do turno', async ($, on) => {
   engine(on)
   const statuses: (string | undefined)[] = []
   on('ui.status', ($, e) => (statuses.push(e.text), { value: undefined }))
+  const usage = {
+    model: 'claude-opus-5-5',
+    input_tokens: 100,
+    output_tokens: 200,
+    cache_read_input_tokens: 1000,
+    cache_creation_input_tokens: 50,
+  }
+  on('turn.step', async function* ($, e) {
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage }
+  })
   await $.session.measure({
     context: { window: 200_000 },
     rateLimits: [{ kind: 'five_hour', percentUsed: 10, resetsAt: iso(NOW + 4 * HOUR) }],
     changed: ['rateLimits'],
   })
+  // Uma chamada do principal e uma de subagente.
+  for (const step of [{ turnId: 't1', index: 0, model: 'claude-opus-5-5', messageCount: 3 }, { turnId: 't1', index: 0, model: 'claude-opus-5-5', messageCount: 1, agentId: 'a1' }]) {
+    const stream = $.turn.step(step)
+    for await (const _ of stream) void _
+  }
+  // Fim de turno sem usage, como chega hoje no desktop.
+  await $.turn.complete({ answer: 'ok', durationMs: 1000, isAborted: false, turnId: 't1', reason: 'answer' })
 
-  await $.turn.complete({
-    answer: 'ok',
-    durationMs: 1000,
-    isAborted: false,
-    turnId: 't1',
-    reason: 'answer',
-    usage: {
-      model: 'claude-opus-5-5',
-      input_tokens: 100,
-      output_tokens: 200,
-      cache_read_input_tokens: 1000,
-      cache_creation_input_tokens: 50,
-    },
-  })
-
-  expect(statuses.at(-1)).toMatch(/│ 1\.4k tok$/)
+  expect(statuses.at(-1)).toMatch(/│ 2\.7k tok$/)
 })
 
 test('linha de status mostra tokens, custo e duração em horas', () => {
@@ -183,11 +186,44 @@ test('faixa acima do prompt: SVG e botão no desktop, texto no terminal', async 
   const desktop = await $.ui.mount({ plugin: 'usage-limits', surface: 'desktop', component: 'AbovePrompt', props })
   expect(await desktop.findAll({ type: 'Svg' })).toHaveLength(2)
   expect(await desktop.find({ type: 'Button', key: 'details' })).toBeDefined()
+  expect(await desktop.find({ text: /Semana/ })).toBeDefined()
 
   const terminal = await $.ui.mount({ plugin: 'usage-limits', surface: 'terminal', component: 'AbovePrompt', props })
   expect(await terminal.find({ type: 'Button', key: 'details' })).toBeUndefined()
-  expect(await terminal.find({ text: /dura ~.* · reset 3,0h/ })).toBeDefined()
+  expect(await terminal.find({ text: /(dura|acaba).* · renova (\S+ )?\d\d:\d\d/ })).toBeDefined()
   expect(await terminal.find({ text: /US\$ 3,21 · \/limites/ })).toBeDefined()
+})
+
+test('minimizar a faixa: uma linha só com os %, e continua minimizada', async ($, on) => {
+  engine(on)
+  on('ui.render', () => ({ type: 'Box', props: {}, children: [] }) as unknown as RenderElement)
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.status', () => ({ value: undefined }))
+  await $.session.measure(MEASURE)
+  const props = { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} }
+
+  for (const surface of ['desktop', 'terminal'] as const) {
+    const band = await $.ui.mount({ plugin: 'usage-limits', surface, component: 'AbovePrompt', props })
+    await band.press({ key: 'band-collapse' })
+    expect(await band.find({ type: 'Button', key: 'band-expand' })).toBeDefined()
+    expect(await band.findAll({ type: 'Svg' })).toHaveLength(0)
+    expect(await band.find({ type: 'Button', key: 'reload' })).toBeUndefined()
+    expect(await band.find({ text: /^60%/ })).toBeDefined()
+    // Outra faixa (outra sessão, outro redesenho) já nasce minimizada.
+    const again = await $.ui.mount({ plugin: 'usage-limits', surface, component: 'AbovePrompt', props })
+    expect(await again.find({ type: 'Button', key: 'band-expand' })).toBeDefined()
+    await again.press({ key: 'band-expand' })
+    expect(await again.find({ type: 'Button', key: 'band-collapse' })).toBeDefined()
+  }
+})
+
+test('leitura de antes do reset: a janela aparece renovada, não "reset 0,0h"', () => {
+  const w = project({ kind: 'five_hour', percentUsed: 8, resetsAt: iso(NOW - 2 * HOUR) }, NOW)
+  expect(w.isRenewed).toBe(true)
+  expect(w.pct).toBe(0)
+  expect(w.ratePerHour).toBeUndefined()
+  expect(bandDetail(w, NOW)).toBe('renovado')
+  expect(statusPart(w)).toBe('5h 0% renovado')
 })
 
 const tok = (input: number, output: number, cacheRead = 0, cacheWrite = 0) => ({ input, output, cacheRead, cacheWrite })
@@ -405,7 +441,7 @@ test('sessão parada usa a leitura mais nova que outra sessão gravou e mostra a
   }))
 
   await $.session.start({ cwd: '/proj', surface: 'terminal', isInteractive: true })
-  expect(statuses.at(-1)).toMatch(/^5h 40% .* │ Sem 12% .* │ leitura há 20min │ 0 tok$/)
+  expect(statuses.at(-1)).toMatch(/^5h 40% .* │ Sem 12% .* │ leitura há 20min$/)
 })
 
 const rec = (id: string, project: string, costUsd: number, minutesAgo: number, ended = false) => ({

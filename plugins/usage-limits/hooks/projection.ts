@@ -120,6 +120,13 @@ export const project = (
   view.resetsAt = resetsAt
   view.msToReset = Math.max(0, resetsAt - now)
 
+  // A leitura é de antes do reset: a janela já renovou e o uso voltou a zero.
+  if (resetsAt <= now) {
+    view.isRenewed = true
+    view.pct = 0
+    return view
+  }
+
   if (bucket && sameWindow(bucket.resetsAt, resetsAt)) {
     view.windowTokens = bucket.tokens
     const moved = pct - bucket.firstPct
@@ -253,12 +260,14 @@ export const readingAge = (readAt: number | undefined, now: number) => {
  */
 export const statusPart = (w: WindowView): string => {
   const head = `${shortLabel(w.kind)} ${percent(w.pct)}`
+  if (w.isRenewed) return `${head} renovado`
   if (w.verdict === 'exhausted') {
     return `${head} ⛔ volta em ${hours((w.msToReset ?? 0) / HOUR)}`
   }
   if (w.ratePerHour === undefined) return head
   if (w.hoursLeft === undefined) return `${head} parado ✓`
   const mark = w.verdict === 'exhausts' ? '⚠' : w.verdict === 'tight' ? '△' : '✓'
+  if (w.hoursLeft >= (w.msToReset ?? 0) / HOUR) return `${head} até renovar ${mark}`
 
   return `${head} dura ${durationLabel(w)} ${mark}`
 }
@@ -274,11 +283,11 @@ export const statusLine = (
   if (age) parts.push(`leitura ${age}`)
   const all = extra?.sessions
   if (all && all.count > 1) {
-    parts.push(`${all.count} sessões · ${compact(all.tokens)} tok · ${usd(all.costUsd)}`)
+    parts.push(`${all.count} sessões · ${all.tokens > 0 ? `${compact(all.tokens)} tok · ` : ''}${usd(all.costUsd)}`)
   } else {
-    const usage = [`${compact(totalTokens(session))} tok`]
+    const usage = totalTokens(session) > 0 ? [`${compact(totalTokens(session))} tok`] : []
     if (costUsd !== undefined) usage.push(usd(costUsd))
-    parts.push(usage.join(' · '))
+    if (usage.length > 0) parts.push(usage.join(' · '))
   }
   if (extra?.api) parts.push(extra.api)
 
