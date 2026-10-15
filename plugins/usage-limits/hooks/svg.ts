@@ -93,3 +93,65 @@ export const tokenMixSvg = (t: Totals, width: number, height = 12): string => {
     '</svg>',
   ].join('')
 }
+
+const arcPath = (cx: number, cy: number, r: number, from: number, to: number) => {
+  // Ângulos em % do círculo, a partir do topo, no sentido horário.
+  const at = (pct: number) => {
+    const a = (pct / 100) * 2 * Math.PI - Math.PI / 2
+    return `${fixed(cx + r * Math.cos(a))} ${fixed(cy + r * Math.sin(a))}`
+  }
+  const large = to - from > 50 ? 1 : 0
+
+  return `M ${at(from)} A ${r} ${r} 0 ${large} 1 ${at(to)}`
+}
+
+/**
+ * Anel de um limite para o painel: o uso cheio, a projeção até o reset mais
+ * clara, um traço onde estaria o ritmo uniforme e o % grande no meio.
+ */
+export const limitRingSvg = (w: WindowView, now: number, size = 96): string => {
+  const stroke = Math.round(size * 0.1)
+  const r = (size - stroke) / 2 - 1
+  const c = size / 2
+  const color = w.isRenewed ? HEX.unknown : HEX[w.verdict]
+  const used = clamp(w.pct)
+  const projected = clamp(w.pctAtReset ?? w.pct)
+  const length = windowLength(w.kind)
+  const pace =
+    length !== undefined && w.resetsAt !== undefined && !w.isRenewed
+      ? clamp(((now - (w.resetsAt - length)) / length) * 100)
+      : undefined
+  const arc = (from: number, to: number, opacity: number) =>
+    to - from >= 99.9
+      ? `<circle cx="${c}" cy="${c}" r="${fixed(r)}" fill="none" stroke="${color}" stroke-opacity="${opacity}" stroke-width="${stroke}"/>`
+      : to - from > 0.2
+        ? `<path d="${arcPath(c, c, r, from, to)}" fill="none" stroke="${color}" stroke-opacity="${opacity}" stroke-width="${stroke}" stroke-linecap="round"/>`
+        : ''
+  const tick = (pct: number) => {
+    const a = (pct / 100) * 2 * Math.PI - Math.PI / 2
+    const r1 = r - stroke / 2 - 2
+    const r2 = r + stroke / 2 + 2
+    return `<line x1="${fixed(c + r1 * Math.cos(a))}" y1="${fixed(c + r1 * Math.sin(a))}" x2="${fixed(c + r2 * Math.cos(a))}" y2="${fixed(c + r2 * Math.sin(a))}" stroke="${TRACK}" stroke-width="2" stroke-linecap="round"/>`
+  }
+
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">`,
+    `<circle cx="${c}" cy="${c}" r="${fixed(r)}" fill="none" stroke="${TRACK}" stroke-opacity="0.2" stroke-width="${stroke}"/>`,
+    projected > used ? arc(used, projected, 0.3) : '',
+    arc(0, used, 1),
+    pace !== undefined ? tick(pace) : '',
+    `<text x="${c}" y="${fixed(c + size * 0.08)}" text-anchor="middle" font-family="-apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="${Math.round(size * 0.24)}" font-weight="700" fill="${color}">${Math.round(w.pct)}%</text>`,
+    '</svg>',
+  ].join('')
+}
+
+/** Barrinha de participação (sessões, projetos). */
+export const shareSvg = (share: number, width = 64, height = 8, color = '#5b8def'): string =>
+  [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">`,
+    `<rect width="${width}" height="${height}" rx="${height / 2}" fill="${TRACK}" fill-opacity="0.2"/>`,
+    share > 0
+      ? `<rect width="${fixed(Math.max(height, clamp(share * 100) / 100 * width))}" height="${height}" rx="${height / 2}" fill="${color}"/>`
+      : '',
+    '</svg>',
+  ].join('')

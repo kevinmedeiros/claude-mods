@@ -55,7 +55,7 @@ Os percentuais vêm dos próprios cabeçalhos de limite da Anthropic, então val
 
 - **Linha de status e faixa acima do prompt** com o % de cada limite, quanto ele dura no ritmo atual (ou *dura até renovar*), quando renova, e tokens e custo de todas as sessões abertas. Uma linha de aviso só aparece quando um limite acaba antes de renovar, com a correção num botão.
 - **▾ Minimizar** recolhe a faixa numa linha (`5h 2%  Sem 91% △`); **▴** traz de volta. A escolha vale para as próximas sessões.
-- **Painel `/limites`** com barras de uso, projeção até o reset e marcador de ritmo uniforme. Mostra também o ritmo do 5h, o ritmo semanal em pontos por dia e quantas horas de trabalho restam no ritmo da última hora.
+- **Painel `/limites`** (o *Detalhes* da faixa): um cartão por limite, com um anel que mostra o uso, a projeção até renovar e o marcador de ritmo uniforme, quanto dura, quando renova e o ritmo; os cenários de modelo numa tabela; e as sessões abertas com a parte de cada uma no custo.
 - **Todas as sessões abertas** na máquina, com projeto, modelo, tokens, custo e fatia do total, mais o total do dia.
 - **Gasto por projeto** em cada janela, para saber qual projeto está queimando a semana.
 - **Recomendação de modelo.** Quando o ritmo não chega ao reset, sugere a troca menos disruptiva, como *"use Opus para orquestrar e Haiku para executar"*, e mostra quanto o limite passaria a durar.

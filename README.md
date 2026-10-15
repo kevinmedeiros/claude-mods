@@ -58,7 +58,7 @@ The percentages come from Anthropic's own rate-limit headers, so they cover **th
 
 - **Status line and a band above the prompt** with each limit's %, how long it lasts at the current pace (or *lasts until it renews*), when it renews, and tokens and cost across all open sessions. A warning line appears only when a limit runs out before it renews, with the fix as a button.
 - **▾ Minimize** folds the band into one line (`5h 2%  Sem 91% △`); **▴** brings it back. The choice sticks across sessions.
-- **`/limites` pane** with bars that show used, projected-to-reset and an even-pace marker, plus the 5-hour pace, the weekly pace in points per day, and how many hours of work are left at the last hour's pace.
+- **`/limites` pane** (the band's *Details*): one card per limit with a ring that shows used, projected-to-renewal and an even-pace marker, how long it lasts, when it renews and the pace; the model scenarios in a table; and every open session with its share of the cost.
 - **Every open session** on the machine, with project, model, tokens, cost and share of the total, plus today's total.
 - **Per-project spend** for each window, so you know which project is burning the week.
 - **Model advice.** When the pace won't reach the reset, it recommends the least disruptive change, such as *"use Opus to orchestrate and Haiku to execute"*, and shows how long the limit would last.

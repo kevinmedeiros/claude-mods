@@ -2,8 +2,8 @@
 // Run from the repository root:  bun docs/generate-previews.ts
 import { writeFileSync } from 'node:fs'
 
-import { clockTime, hours, percent, project, statusPart } from '../plugins/usage-limits/hooks/projection'
-import { limitBarSvg, tokenMixSvg } from '../plugins/usage-limits/hooks/svg'
+import { clockTime, duration, hours, percent, project, statusPart } from '../plugins/usage-limits/hooks/projection'
+import { limitRingSvg, shareSvg } from '../plugins/usage-limits/hooks/svg'
 
 const NOW = Date.parse('2026-10-09T13:00:00Z')
 const HOUR = 3_600_000
@@ -14,9 +14,6 @@ const week = project({ kind: 'seven_day', percentUsed: 41, resetsAt: new Date(NO
   weekPerFive: 0.25,
   activeHoursPerDay: 8,
 })
-const h = (ms: number) => hours(ms / HOUR)
-const fiveLeft = `~${hours(five.hoursLeft ?? 0)}`
-const weekLeft = `~${hours(week.hoursLeft ?? 0)}`
 
 /** The band's text after the %, as the mod's bandDetail draws it. */
 const bandText = (w: typeof five) => {
@@ -27,10 +24,6 @@ const bandText = (w: typeof five) => {
 }
 const fiveColor = five.verdict === 'ok' ? '#3fb950' : '#d29922'
 const weekColor = week.verdict === 'exhausts' ? '#f85149' : week.verdict === 'tight' ? '#d29922' : '#3fb950'
-const weekVerdict =
-  week.verdict === 'exhausts' && week.exhaustAt !== undefined && week.resetsAt !== undefined
-    ? `⚠ No ritmo atual acaba ~${clockTime(week.exhaustAt, NOW)}, ${hours((week.resetsAt - week.exhaustAt) / HOUR)} antes do reset`
-    : `✓ Dura até o reset (~${percent(week.pctAtReset ?? 0)} no fim)`
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
 const SANS = '-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif'
@@ -92,37 +85,56 @@ const t = (x: number, y: number, text: string, opts: { size?: number; color?: st
 const stat = (x: number, y: number, label: string, value: string, color?: string) =>
   t(x, y, label, { size: 11, color: '#656d76' }) + t(x, y + 18, value, { bold: true, color })
 
+/** "Dura" as the pane's card shows it. */
+const lasts = (w: typeof five) =>
+  w.verdict !== 'exhausts' && (w.hoursLeft ?? 0) >= (w.msToReset ?? 0) / HOUR ? 'até renovar' : `~${hours(w.hoursLeft ?? 0)}`
+const renews = (w: typeof five) => `${clockTime(w.resetsAt ?? NOW, NOW)} · em ${duration(w.msToReset ?? 0)}`
+const RED = '#e5484d'
+const GREEN = '#2f9e62'
+const limitCard = (x: number, w: typeof five, label: string, rate: string, rateLabel: string, verdict: string) => {
+  const color = w.verdict === 'exhausts' ? RED : w.verdict === 'tight' ? '#d99a00' : GREEN
+  return [
+    `<rect x="${x}" y="50" width="314" height="168" rx="10" fill="#ffffff" stroke="${w.verdict === 'exhausts' ? RED : '#d0d7de'}" stroke-width="1.5"/>`,
+    nest(limitRingSvg(w, NOW, 88), x + 14, 64),
+    t(x + 116, 78, label, { bold: true }),
+    stat(x + 116, 104, 'Dura', lasts(w), color),
+    stat(x + 216, 104, rateLabel, rate),
+    stat(x + 116, 144, 'Renova', renews(w)),
+    t(x + 14, 186, verdict, { size: 12, color }),
+  ].join('')
+}
+const row = (y: number, cells: [number, string, { color?: string; bold?: boolean; size?: number }?][]) =>
+  cells.map(([x, text, o]) => t(x, y, text, { size: 12, ...o })).join('')
+
 const desktop = [
-  `<svg xmlns="http://www.w3.org/2000/svg" width="680" height="470" viewBox="0 0 680 470">`,
-  `<rect width="680" height="470" rx="12" fill="#f6f8fa"/>`,
+  `<svg xmlns="http://www.w3.org/2000/svg" width="680" height="520" viewBox="0 0 680 520">`,
+  `<rect width="680" height="520" rx="12" fill="#f6f8fa"/>`,
   t(24, 34, 'Limites de uso', { size: 15, bold: true }),
   t(656, 34, 'atualizado 10:00  ↻ Atualizar', { size: 12, color: '#656d76', anchor: 'end' }),
-  card(50, 150, five.verdict === 'ok' ? '#2f9e62' : '#d99a00'),
-  t(36, 76, '5 horas', { bold: true }),
-  t(644, 76, '38% usado', { bold: true, color: '#2f9e62', anchor: 'end' }),
-  nest(limitBarSvg(five, NOW, 608), 36, 84),
-  stat(36, 134, 'Duração estimada', fiveLeft, '#2f9e62'),
-  stat(196, 134, 'Reset em', `${h(five.msToReset ?? 0)} · ${clockTime(five.resetsAt ?? NOW, NOW)}`),
-  stat(356, 134, 'Ritmo recente', `${Math.round(five.ratePerHour ?? 0)}%/h`),
-  stat(500, 134, 'Média da janela', `${Math.round(five.windowRatePerHour ?? 0)}%/h`),
-  t(36, 188, `✓ Dura até o reset (~${percent(five.pctAtReset ?? 0)} no fim)`, { color: '#2f9e62' }),
-  card(214, 150, weekColor === '#f85149' ? '#e5484d' : weekColor),
-  t(36, 240, 'Semanal', { bold: true }),
-  t(644, 240, '41% usado', { bold: true, color: weekColor === '#f85149' ? '#e5484d' : weekColor, anchor: 'end' }),
-  nest(limitBarSvg(week, NOW, 608), 36, 248),
-  stat(36, 298, 'Duração estimada', weekLeft, '#e5484d'),
-  stat(196, 298, 'Reset em', `${h(week.msToReset ?? 0)} · ${clockTime(week.resetsAt ?? NOW, NOW)}`),
-  stat(356, 298, 'Ritmo da conta', `${Math.round((week.ratePerHour ?? 0) * 24)} pts/dia`),
-  stat(500, 298, 'Horas de uso', `~${hours(week.workHoursLeft ?? 0)}`),
-  t(36, 352, weekVerdict, { color: '#e5484d' }),
-  card(378, 76, '#d0d7de'),
-  t(36, 402, 'Esta sessão', { bold: true }),
-  nest(tokenMixSvg({ input: 120_000, output: 480_000, cacheWrite: 900_000, cacheRead: 4_800_000, turns: 0 }, 608), 36, 412),
-  `<text x="36" y="444" font-family="${SANS}" font-size="11" fill="#656d76">` +
-    [['#5b8def', 'entrada 120k'], ['#b26ad9', 'saída 480k'], ['#e0a458', 'cache escrito 900k'], ['#3fb4c4', 'cache lido 4.8M']]
-      .map(([c, label]) => `<tspan fill="${c}">■</tspan> ${label}   `)
-      .join('') +
-    `</text>`,
+  limitCard(20, five, '5 horas', `${Math.round(five.ratePerHour ?? 0)}%/h`, 'Ritmo recente', '✓ Dura até renovar'),
+  limitCard(346, week, 'Semanal', `${Math.round((week.ratePerHour ?? 0) * 24)} pts/dia`, 'Ritmo da conta', `⚠ Acaba ~${clockTime(week.exhaustAt ?? NOW, NOW)}, antes de renovar`),
+  `<rect x="20" y="232" width="640" height="150" rx="10" fill="#ffffff" stroke="#d99a00" stroke-width="1.5"/>`,
+  t(36, 258, 'Qual modelo usar', { bold: true }),
+  t(36, 280, 'Use Opus 5.5 para orquestrar e Haiku para executar: o plano dura até o reset.', { size: 12, color: '#9a6700' }),
+  row(306, [[36, 'Se o resto da janela semanal seguir o gasto das últimas 3 horas com uso:', { color: '#656d76' }]]),
+  row(326, [[36, '› Subagentes em Haiku', { bold: true }], [300, '~140h', { color: GREEN }], [390, '82% no reset', { color: '#656d76' }], [500, '−58% gasto', { color: '#656d76' }]]),
+  row(346, [[36, '  Tudo em Sonnet'], [300, '~96h', { color: GREEN }], [390, '97% no reset', { color: '#656d76' }], [500, '−45% gasto', { color: '#656d76' }]]),
+  `<rect x="36" y="356" width="150" height="20" rx="6" fill="#0969da"/>`,
+  t(111, 370, 'Haiku nos subagentes', { size: 11, color: '#ffffff', bold: true, anchor: 'middle' }),
+  `<rect x="20" y="396" width="640" height="110" rx="10" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>`,
+  t(36, 420, 'Sessões', { bold: true }),
+  ...[
+    ['● my-game', 'Opus 5.5', '4.1M', 'US$ 6,42', 0.65],
+    ['○ web-app', 'Sonnet 5.5', '1.6M', 'US$ 2,31', 0.23],
+    ['○ claude-mods', 'Haiku 5.5', '0.6M', 'US$ 1,18', 0.12],
+  ].map(([name, model, tok, cost, share], i) => {
+    const y = 442 + i * 20
+    return (
+      row(y, [[36, String(name), { bold: i === 0 }], [190, String(model), { color: '#656d76' }], [290, String(tok), { color: '#656d76' }], [360, String(cost)]]) +
+      nest(shareSvg(Number(share), 64, 8), 460, y - 8) +
+      t(534, y, percent(Number(share) * 100), { size: 12, color: '#656d76' })
+    )
+  }),
   `</svg>`,
 ].join('\n')
 

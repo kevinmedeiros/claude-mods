@@ -17,7 +17,7 @@ import {
   totalTokens,
   usd,
 } from './projection'
-import { TOKEN_HEX, limitBarSvg, tokenMixSvg } from './svg'
+import { HEX, TOKEN_HEX, limitBarSvg, limitRingSvg, shareSvg, tokenMixSvg } from './svg'
 
 type TerminalUi = Elements['terminal']
 /** O que desktop, VS Code e mobile têm em comum: caixas, texto, SVG e botões. */
@@ -57,16 +57,16 @@ const verdictText = (w: WindowView, now: number): string => {
   if (w.isRenewed) return '↺ Renovou: o uso novo aparece na próxima resposta do Claude'
   switch (w.verdict) {
     case 'exhausted':
-      return `⛔ Esgotado — volta às ${w.resetsAt ? clockTime(w.resetsAt, now) : '?'}`
+      return `⛔ Esgotado: renova ${w.resetsAt ? clockTime(w.resetsAt, now) : '?'}`
     case 'exhausts':
       return w.exhaustAt !== undefined && w.resetsAt !== undefined
         ? `⚠ No ritmo atual acaba ~${clockTime(w.exhaustAt, now)}, ` +
-            `${duration(w.resetsAt - w.exhaustAt)} antes do reset`
-        : '⚠ No ritmo atual acaba antes do reset'
+            `${duration(w.resetsAt - w.exhaustAt)} antes de renovar`
+        : '⚠ No ritmo atual acaba antes de renovar'
     case 'tight':
-      return `△ Apertado: chega a ~${percent(w.pctAtReset ?? w.pct)} no reset`
+      return `△ Apertado: chega a ~${percent(w.pctAtReset ?? w.pct)} quando renovar`
     case 'ok':
-      return `✓ Dura até o reset (~${percent(w.pctAtReset ?? w.pct)} no fim)`
+      return `✓ Dura até renovar (~${percent(w.pctAtReset ?? w.pct)} no fim)`
     default:
       return 'Sem projeção para esta janela'
   }
@@ -323,11 +323,12 @@ const AdviceCard = (ui: BasicUi, a: Advice | undefined, economy: boolean, action
 
 // ---------- desktop, VS Code, mobile ----------
 
-const Stat = (ui: RichUi, key: string, label: string, value: string, color?: string) => {
+/** Um número com o rótulo em cima: "Dura" / "até renovar". */
+const Fact = (ui: RichUi, key: string, label: string, value: string, color?: string) => {
   const { Box, Text } = ui
 
   return (
-    <Box key={key} flexDirection="column" minWidth={12}>
+    <Box key={key} flexDirection="column" minWidth={104}>
       <Text dimColor>{label}</Text>
       <Text bold color={color}>
         {value}
@@ -336,41 +337,192 @@ const Stat = (ui: RichUi, key: string, label: string, value: string, color?: str
   )
 }
 
-const WindowCard = (ui: RichUi, w: WindowView, now: number, px: number) => {
+/** "dura até renovar", "~3,2h", "esgotado"… para o cartão do painel. */
+const lastsText = (w: WindowView) => {
+  if (w.isRenewed) return 'renovado'
+  if (w.verdict === 'exhausted') return 'esgotado'
+  if (w.ratePerHour === undefined) return '—'
+  if (w.hoursLeft === undefined) return 'parado'
+  return w.verdict !== 'exhausts' && w.hoursLeft >= (w.msToReset ?? 0) / HOUR ? 'até renovar' : `~${hours(w.hoursLeft)}`
+}
+
+const renewsText = (w: WindowView, now: number) =>
+  w.resetsAt === undefined ? '—' : `${clockTime(w.resetsAt, now)} · em ${duration(w.msToReset ?? 0)}`
+
+/** Quanto cada projeto gastou na janela, com barrinhas. */
+const ProjectBars = (ui: RichUi, w: WindowView) => {
   const { Box, Text, Svg } = ui
-  const tokens = tokensLine(w)
+  const list = (w.projects ?? []).slice(0, 4)
+  if (list.length === 0) return undefined
 
   return (
-    <Box key={w.kind} flexDirection="column" borderStyle="round" borderColor={colorOf(w)} paddingX={1}>
-      <Box flexDirection="row" justifyContent="space-between">
-        <Text bold>{w.label}</Text>
-        <Text bold color={colorOf(w)}>
-          {percent(w.pct)} usado
-        </Text>
-      </Box>
-      <Svg
-        source={limitBarSvg(w, now, px)}
-        alt={`${w.label}: ${percent(w.pct)} usado, ${durationText(w)} restantes`}
-        width={px}
-        height={30}
-      />
-      <Box flexDirection="row" columnGap={3} flexWrap="wrap">
-        {Stat(ui, 'dur', 'Duração estimada', durationText(w), colorOf(w))}
-        {Stat(ui, 'reset', 'Reset em', resetText(w, now))}
-        {isWeekly(w)
-          ? Stat(ui, 'rate', 'Ritmo da conta', perDayText(w))
-          : Stat(ui, 'rate', 'Ritmo recente', rateText(w.recentRatePerHour))}
-        {Stat(ui, 'avg', 'Média da janela', rateText(w.windowRatePerHour))}
-      </Box>
-      {workDaysText(w) !== undefined && <Text dimColor>{workDaysText(w)}</Text>}
-      <Text color={colorOf(w)}>{verdictText(w, now)}</Text>
-      {tokens !== undefined && <Text dimColor>{tokens}</Text>}
-      {ProjectList(ui, w, '')}
+    <Box key="projects" flexDirection="column" rowGap={0}>
+      <Text dimColor>Por projeto, nesta máquina</Text>
+      {list.map(p => (
+        <Box key={p.name} flexDirection="row" columnGap={1} alignItems="center">
+          <Box width={120}>
+            <Text wrap="truncate-end">{p.name}</Text>
+          </Box>
+          <Svg source={shareSvg(p.share, 72, 8, HEX[w.verdict])} alt={`${p.name}: ${percent(p.share * 100)} do gasto`} width={72} height={8} />
+          <Text dimColor>
+            {percent(p.share * 100)}
+            {p.points !== undefined ? ` · ≈${p.points.toFixed(1).replace('.', ',')} pts` : ''}
+          </Text>
+        </Box>
+      ))}
     </Box>
   )
 }
 
-const SessionCard = (ui: RichUi, { snap, totals }: ViewData, px: number) => {
+/** Cartão de um limite: o anel com o %, os números ao lado e o veredito embaixo. */
+const LimitCard = (ui: RichUi, w: WindowView, now: number) => {
+  const { Box, Text, Svg } = ui
+  const color = w.isRenewed ? 'subtle' : colorOf(w)
+  const work = workDaysText(w)
+
+  return (
+    <Box
+      key={w.kind}
+      flexDirection="column"
+      flexGrow={1}
+      minWidth={300}
+      borderStyle="round"
+      borderColor={w.verdict === 'exhausts' || w.verdict === 'exhausted' ? 'error' : 'subtle'}
+      paddingX={1}
+      paddingY={1}
+      rowGap={1}
+    >
+      <Box flexDirection="row" columnGap={2} alignItems="center">
+        <Svg
+          source={limitRingSvg(w, now, 88)}
+          alt={`${w.label}: ${percent(w.pct)} usado, ${lastsText(w)}`}
+          width={88}
+          height={88}
+        />
+        <Box flexDirection="column" rowGap={1} flexGrow={1}>
+          <Text bold>{w.label}</Text>
+          <Box flexDirection="row" columnGap={2} rowGap={1} flexWrap="wrap">
+            {Fact(ui, 'lasts', 'Dura', lastsText(w), color)}
+            {Fact(ui, 'renews', 'Renova', renewsText(w, now))}
+            {isWeekly(w)
+              ? Fact(ui, 'rate', 'Ritmo da conta', perDayText(w))
+              : Fact(ui, 'rate', 'Ritmo recente', rateText(w.recentRatePerHour))}
+          </Box>
+        </Box>
+      </Box>
+      <Text color={color}>{verdictText(w, now)}</Text>
+      {work !== undefined && <Text dimColor>{work}</Text>}
+      {ProjectBars(ui, w)}
+    </Box>
+  )
+}
+
+/** Uma linha de cenário da recomendação, em colunas alinhadas. */
+const ScenarioRow = (ui: RichUi, a: Advice, s: Advice['scenarios'][number]) => {
+  const { Box, Text } = ui
+  const isPick = s.id === a.pick
+
+  return (
+    <Box key={s.id} flexDirection="row" columnGap={2}>
+      <Box flexGrow={1} minWidth={200}>
+        <Text bold={isPick}>
+          {isPick ? '› ' : '  '}
+          {s.label}
+        </Text>
+      </Box>
+      <Box width={88}>
+        <Text color={s.lasts ? 'success' : 'error'}>{s.hoursLeft === undefined ? '—' : `~${hours(s.hoursLeft)}`}</Text>
+      </Box>
+      <Box width={88}>
+        <Text dimColor>{percent(s.pctAtReset)} no reset</Text>
+      </Box>
+      <Box width={80}>
+        <Text dimColor>−{percent((1 - s.factor) * 100)} gasto</Text>
+      </Box>
+    </Box>
+  )
+}
+
+/** "Qual modelo usar" no desktop: a frase, o que está rodando e os cenários numa tabela. */
+const RichAdviceCard = (ui: RichUi, a: Advice | undefined, economy: boolean, actions: Actions) => {
+  const { Box, Text } = ui
+
+  return (
+    <Box key="advice" flexDirection="column" borderStyle="round" borderColor={a && !a.isFine ? adviceColor(a) : 'subtle'} paddingX={1} paddingY={1} rowGap={1}>
+      <Text bold>Qual modelo usar</Text>
+      {a === undefined ? (
+        <Text dimColor>A recomendação aparece depois de algumas respostas com os limites medidos.</Text>
+      ) : (
+        <Box flexDirection="column" rowGap={1}>
+          <Text color={adviceColor(a)}>{a.headline}</Text>
+          <Text dimColor>{setupText(a, economy)}</Text>
+          {a.scenarios.length > 0 && (
+            <Box flexDirection="column">
+              <Text dimColor>
+                Se o resto da janela {a.windowLabel.toLowerCase()} seguir o gasto{' '}
+                {a.mixBasis === 'recent' ? 'das últimas 3 horas com uso' : 'da janela toda'}:
+              </Text>
+              {a.scenarios.map(s => ScenarioRow(ui, a, s))}
+            </Box>
+          )}
+          {a.tip !== undefined && <Text dimColor>{a.tip}</Text>}
+        </Box>
+      )}
+      {AdviceButtons(ui, a, economy, { ...actions, reload: undefined, details: undefined }, true)}
+    </Box>
+  )
+}
+
+/** As sessões abertas numa tabela, com a parte de cada uma no custo. */
+const SessionsTable = (ui: RichUi, snap: Snapshot) => {
+  const { Box, Text, Svg } = ui
+  const view = snap.sessions
+  if (!view) return <Text dimColor>Lista de sessões indisponível nesta máquina.</Text>
+  const total = view.total.costUsd
+
+  return (
+    <Box key="sessions-table" flexDirection="column">
+      {view.running.map(r => {
+        const share = total > 0 ? r.costUsd / total : 0
+        const isSelf = r.id === snap.selfId
+        const tokens = totalTokens(r.tokens)
+
+        return (
+          <Box key={r.id} flexDirection="row" columnGap={2} alignItems="center">
+            <Box width={150}>
+              <Text bold={isSelf} wrap="truncate-end">
+                {isSelf ? '● ' : '○ '}
+                {r.project}
+              </Text>
+            </Box>
+            <Box width={84}>
+              <Text dimColor>{r.model ? modelLabel(modelKey(r.model)) : '—'}</Text>
+            </Box>
+            <Box width={64}>
+              <Text dimColor>{tokens > 0 ? compact(tokens) : '—'}</Text>
+            </Box>
+            <Box width={96}>
+              <Text>{usd(r.costUsd)}</Text>
+            </Box>
+            <Svg source={shareSvg(share)} alt={`${percent(share * 100)} do custo`} width={64} height={8} />
+            <Text dimColor>{percent(share * 100)}</Text>
+          </Box>
+        )
+      })}
+      <Box flexDirection="row" columnGap={2} marginTop={1}>
+        <Text bold>
+          {view.total.count} {view.total.count === 1 ? 'sessão aberta' : 'sessões abertas'} · {usd(view.total.costUsd)}
+        </Text>
+        <Text dimColor>
+          hoje: {view.today.count} sessões · {usd(view.today.costUsd)}
+        </Text>
+      </Box>
+    </Box>
+  )
+}
+
+/** Sessões da máquina e os tokens desta. */
+const UsageCard = (ui: RichUi, { snap, totals }: ViewData, px: number) => {
   const { Box, Text, Svg } = ui
   const tokens = totalTokens(totals)
   const legend = [
@@ -381,28 +533,27 @@ const SessionCard = (ui: RichUi, { snap, totals }: ViewData, px: number) => {
   ] as const
 
   return (
-    <Box key="session" flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1}>
+    <Box key="usage" flexDirection="column" borderStyle="round" borderColor="subtle" paddingX={1} paddingY={1} rowGap={1}>
       <Text bold>Sessões</Text>
-      {SessionsList(ui, snap)}
+      {SessionsTable(ui, snap)}
       <Text bold>Esta sessão</Text>
-      <Box flexDirection="row" columnGap={3} flexWrap="wrap">
-        {Stat(ui, 'tokens', 'Tokens', compact(tokens))}
-        {Stat(ui, 'cost', 'Custo', snap.costUsd === undefined ? '—' : usd(snap.costUsd))}
-        {Stat(ui, 'turns', 'Turnos', String(totals.turns))}
-        {Stat(ui, 'ctx', 'Contexto', snap.contextPercent === undefined ? '—' : `${snap.contextPercent}%`)}
+      <Box flexDirection="row" columnGap={2} rowGap={1} flexWrap="wrap">
+        {Fact(ui, 'tokens', 'Tokens', compact(tokens))}
+        {Fact(ui, 'cost', 'Custo', snap.costUsd === undefined ? '—' : usd(snap.costUsd))}
+        {Fact(ui, 'turns', 'Turnos', String(totals.turns))}
+        {Fact(ui, 'ctx', 'Contexto', snap.contextPercent === undefined ? '—' : `${snap.contextPercent}%`)}
       </Box>
-      {tokens > 0 && (
-        <Svg source={tokenMixSvg(totals, px)} alt="Composição dos tokens da sessão" width={px} height={12} />
-      )}
+      {tokens > 0 && <Svg source={tokenMixSvg(totals, px, 10)} alt="Composição dos tokens da sessão" width={px} height={10} />}
       {tokens > 0 && (
         <Box flexDirection="row" columnGap={2} flexWrap="wrap">
           {legend.map(([label, n, color]) => (
             <Text key={label}>
-              <Text color={color}>■</Text> {label} {compact(n)}
+              <Text color={color}>●</Text> <Text dimColor>{label}</Text> {compact(n)}
             </Text>
           ))}
         </Box>
       )}
+      <Text dimColor>Custo equivalente em preço de API; no plano, o que conta são os limites de 5h e semanal.</Text>
     </Box>
   )
 }
@@ -412,26 +563,30 @@ export const RichPane = (ui: RichUi, data: ViewData, columns: number, actions: A
   const { Box, Text, Button } = ui
   const { snap } = data
   const now = snap.updatedAt
-  const px = Math.max(220, Math.min(820, columns * 7 - 24))
+  const px = Math.max(220, Math.min(760, columns * 7 - 48))
+  const stale = isStale(snap)
 
   return (
     <Box flexDirection="column" rowGap={1}>
-      <Box flexDirection="row" justifyContent="space-between">
+      <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={2} flexWrap="wrap">
         <Text bold>Limites de uso</Text>
         <Box flexDirection="row" columnGap={2} alignItems="center">
-          <Text color={isStale(snap) ? 'warning' : undefined} dimColor={!isStale(snap)}>
+          <Text color={stale ? 'warning' : undefined} dimColor={!stale}>
             {freshness(snap)}
           </Text>
           {actions.reload && <Button key="reload-top" label="↻ Atualizar" onPress={actions.reload} />}
         </Box>
       </Box>
       {snap.windows.length === 0 && <Text dimColor>{EMPTY}</Text>}
-      {snap.windows.map(w => WindowCard(ui, w, now, px))}
-      {AdviceCard(ui, snap.advice, data.economy, actions)}
-      {SessionCard(ui, data, px)}
+      <Box flexDirection="row" columnGap={1} rowGap={1} flexWrap="wrap">
+        {snap.windows.map(w => LimitCard(ui, w, now))}
+      </Box>
+      {RichAdviceCard(ui, snap.advice, data.economy, actions)}
+      {UsageCard(ui, data, px)}
       {ApiCard(ui, data.api, now)}
       <Text dimColor>
-        Barra cheia: uso · hachura: projeção até o reset · traço: onde o uso estaria num ritmo uniforme
+        Anel cheio: uso · parte clara: projeção até renovar · traço: onde o uso estaria num ritmo uniforme. Estimativas pelo preço de API de
+        cada modelo; a assinatura pode pesar os modelos de outro jeito.
       </Text>
     </Box>
   )

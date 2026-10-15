@@ -148,8 +148,10 @@ test('painel no desktop desenha cartões com SVG', async ($, on) => {
     requestId: 'usage-limits',
     props: PANE_PROPS,
   })
+  // Um anel por limite.
   expect(await ui.findAll({ type: 'Svg' })).toHaveLength(2)
-  expect(await ui.find({ text: 'Duração estimada' })).toBeDefined()
+  expect(await ui.find({ text: 'Dura' })).toBeDefined()
+  expect(await ui.find({ text: 'Renova' })).toBeDefined()
   expect(await ui.find({ text: 'US$ 3,21' })).toBeDefined()
   expect(await ui.find({ text: /Apertado|Dura até|acaba/ })).toBeDefined()
   expect(await ui.find({ text: 'Qual modelo usar' })).toBeDefined()
